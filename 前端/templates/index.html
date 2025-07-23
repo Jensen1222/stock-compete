@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>虛擬股票投資系統</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+{% if current_user.is_authenticated %}
+  <div class="account-info">
+    👤 帳號：<strong>{{ current_user.username }}</strong>
+    <a href="{{ url_for('logout') }}">登出</a>
+  </div>
+{% endif %}
+
+<div class="container">
+  <h1>虛擬股票投資系統</h1>
+
+  <div class="card">
+    <h2>📝 投資個性問卷</h2>
+    <p>完成簡單五題問卷，了解你的投資風格並獲得建議。</p>
+    <button class="buy-btn" onclick="window.open('/quiz', '_blank')">開始問卷測驗</button>
+  </div>
+
+  <div class="card">
+    <h2>📊 排行榜</h2>
+    <p>查看所有使用者的總資產排行。</p>
+    <button class="buy-btn" onclick="window.location.href='/ranking'">查看排行榜</button>
+  </div>
+
+  <div class="card balance-card">
+    <div>
+      <h2>目前餘額：<span id="balance">$0.00</span></h2>
+      <h2 style="margin-top: 10px;">總資產：<span id="total-assets">$0.00</span></h2>
+    </div>
+  </div>
+
+<!-- 整股交易區 -->
+<div class="card">
+  <h2>整股交易區</h2>
+  <div class="input-group">
+    <label for="ticker">股票代號：</label>
+    <input type="text" id="ticker" placeholder="例如：2330" required>
+  </div>
+  <div class="input-group">
+    <label for="quantity">數量（張）：</label>
+    <input type="number" id="quantity" placeholder="例如：10" required>
+  </div>
+  <div class="input-group">
+    <button class="buy-btn" onclick="buyStock()">買入</button>
+    <button class="sell-btn" onclick="sellStock()">賣出</button>
+  </div>
+</div>
+
+<!-- 零股交易區 -->
+<div class="card">
+  <h2>零股交易區</h2>
+  <div class="input-group">
+    <label for="ticker-lot">股票代號：</label>
+    <input type="text" id="ticker-lot" placeholder="例如：2330" required>
+  </div>
+  <div class="input-group">
+    <label for="quantity-lot">股數（1～999）：</label>
+    <input type="number" id="quantity-lot" min="1" max="999" placeholder="例如：30" required>
+  </div>
+  <div class="input-group">
+    <button id="buy-lot-btn" type="button" class="buy-btn">買入零股</button>
+    <button id="sell-lot-btn" type="button" class="sell-btn">賣出零股</button>
+  </div>
+</div>
+
+
+
+
+  <!-- ✅ 整合後的「股票查詢與趨勢圖」 -->
+  <div class="card">
+    <h2>📈 股票查詢與趨勢圖</h2>
+
+    <div class="input-group">
+      <label for="queryTicker">股票代碼</label>
+      <input type="text" id="queryTicker" placeholder="例如：2330" />
+    </div>
+
+    <div class="input-group" style="margin-top: 10px;">
+      <button class="buy-btn" onclick="queryTaiwanStock()">查詢</button>
+    </div>
+
+    <p id="currentPrice" style="margin-top: 10px;"></p>
+    <canvas id="chart" width="400" height="200"></canvas>
+  </div>
+
+ <div class="card">
+  <h2>TradingView 即時圖表</h2>
+  <div class="tradingview-widget-container">
+    <div id="tradingview-widget"></div>
+    <div class="tradingview-widget-copyright">
+      <a href="https://tw.tradingview.com/" rel="noopener" target="_blank">
+        <span>Track all Markets on TradingView</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 放在這塊卡片後面 -->
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script type="text/javascript">
+new TradingView.widget({
+  "container_id": "tradingview-widget",
+  "width": "100%",
+  "height": 400,
+  "symbol": "TWSE:2330",
+  "interval": "D",
+  "timezone": "Asia/Taipei",
+  "theme": "dark",
+  "style": "1",
+  "locale": "zh_TW",
+  "toolbar_bg": "#f1f3f6",
+  "enable_publishing": false,
+  "allow_symbol_change": true,
+  "hide_top_toolbar": false,
+  "save_image": false
+});
+</script>
+
+
+  <div class="card">
+    <h2>投資組合</h2>
+    <table id="portfolio-table">
+      <thead><tr><th>代碼</th><th>數量</th><th>成本價</th><th>市價</th><th>市值</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+  <h2>交易紀錄</h2>
+  <p>查看你所有買入和賣出的紀錄</p>
+  <button class="buy-btn" onclick="window.location.href='/trades'">查看交易紀錄</button>
+</div>
+
+  <div class="card">
+    <h2>ai投資問題</h2>
+    <p>相關投資問題。</p>
+    <button class="buy-btn" onclick="window.location.href='/ai'">ai投資問題</button>
+  </div>
+</div>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+
+<script>
+let historyChart;
+
+function queryTaiwanStock() {
+  const ticker = document.getElementById("queryTicker").value.trim();
+  if (!ticker) return alert("請輸入股票代碼");
+
+  // 即時價格
+  fetch(`/price?ticker=${ticker}`)
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        document.getElementById("currentPrice").textContent =
+          `${ticker} 當前價格為：$${data.price}`;
+      } else {
+        document.getElementById("currentPrice").textContent = `查無即時價格：${data.message}`;
+      }
+    });
+
+  // 歷史價格趨勢圖
+  fetch(`/history?ticker=${ticker}`)
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        const labels = data.data.map(d => d.Date);
+        const prices = data.data.map(d => d.Close);
+        const ctx = document.getElementById("chart").getContext("2d");
+
+        if (historyChart) {
+          historyChart.data.labels = labels;
+          historyChart.data.datasets[0].data = prices;
+          historyChart.data.datasets[0].label = `${ticker} 過去30天`;
+          historyChart.update();
+        } else {
+          historyChart = new Chart(ctx, {
+            type: "line",
+            data: {
+              labels: labels,
+              datasets: [{
+                label: `${ticker} 過去30天`,
+                data: prices,
+                borderColor: "#00c853",
+                fill: false
+              }]
+            },
+            options: {
+              responsive: true,
+              scales: {
+                x: {
+                  title: {
+                    display: true,
+                    text: '日期'
+                  }
+                },
+                y: {
+                  title: {
+                    display: true,
+                    text: '收盤價'
+                  }
+                }
+              }
+            }
+          });
+        }
+      } else {
+        alert("查詢歷史價格失敗：" + data.message);
+      }
+    })
+    .catch(err => {
+      console.error("查詢錯誤", err);
+      alert("查詢過程中發生錯誤");
+    });
+    
+}
+
+
+</script>
+
+</body>
+</html>

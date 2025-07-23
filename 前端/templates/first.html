@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模擬投資系統</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      background-image: url('pexels-pixabay-534216.jpg'); /* 改成你的圖片檔名 */
+      background-size: cover;
+      background-position: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Arial', sans-serif;
+      color: white;
+      text-shadow: 1px 1px 4px black;
+    }
+
+    h1 {
+      font-size: 3em;
+      margin-bottom: 40px;
+    }
+
+    button {
+      padding: 15px 30px;
+      font-size: 1.2em;
+      background-color: rgba(0, 123, 255, 0.8);
+      border: none;
+      color: white;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: rgba(0, 123, 255, 1);
+    }
+  </style>
+</head>
+<body>
+{% if current_user.is_authenticated %}
+  <div style="position: fixed; top: 10px; left: 10px; background: #f0f0f0; padding: 8px 12px; border-radius: 10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); z-index: 999;">
+    👤 帳號：<strong>{{ current_user.username }}</strong> |
+    <a href="{{ url_for('logout') }}">登出</a>
+  </div>
+{% endif %}
+
+  <h1>歡迎進入模擬投資系統</h1>
+  <button onclick="startSimulation()">開始模擬</button>
+
+  <script>
+    function startSimulation() {
+      // 這裡可以設定導向到下一頁
+      window.location.href = 'index.html'; // 之後你可以建立 simulation.html
+    }
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>排行榜</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .ranking-table {
+      width: 100%;
+      border-collapse: collapse;
+      background-color: var(--card-bg);
+      box-shadow: var(--card-shadow);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .ranking-table th, .ranking-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+      color: var(--text-primary);
+    }
+    .ranking-table th {
+      background: linear-gradient(to right, var(--primary), var(--secondary));
+      color: white;
+    }
+    .ranking-container {
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .back-btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 20px;
+      background-color: var(--primary);
+      color: white;
+      border-radius: 8px;
+      text-decoration: none;
+    }
+    .back-btn:hover {
+      background-color: var(--primary-dark);
+    }
+  </style>
+</head>
+<body>
+  {% if current_user.is_authenticated %}
+    <div class="account-info">
+      👤 帳號：<strong>{{ current_user.username }}</strong>
+      <a href="{{ url_for('logout') }}">登出</a>
+    </div>
+  {% endif %}
+
+  <div class="ranking-container">
+    <h1 style="text-align: center;">🏆 用戶資產排行榜</h1>
+    <table class="ranking-table">
+      <thead>
+        <tr>
+          <th>名次</th>
+          <th>用戶名稱</th>
+          <th>總資產（含現金與持股）</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in ranking_data %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ user.username }}</td>
+            <td>${{ '%.2f' | format(user.total_value) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="text-align: center;">
+      <a href="/" class="back-btn">返回首頁</a>
+    </div>
+  </div>
+</body>
+</html>

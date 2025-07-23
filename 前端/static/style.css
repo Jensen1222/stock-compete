@@ -1,0 +1,278 @@
+:root {
+  --primary: #2962ff;
+  --primary-dark: #0039cb;
+  --secondary: #00c853;
+  --secondary-dark: #009624;
+  --danger: #ff5252;
+  --danger-dark: #c50e29;
+  --card-bg: #1e293b;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+  --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+body {
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  color: var(--text-primary);
+  min-height: 100vh;
+  padding: 20px;
+  line-height: 1.6;
+  font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+}
+
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto;
+  gap: 20px;
+  grid-template-areas:
+    "header header"
+    "balance balance"
+    "actions chart"
+    "tradingview tradingview"
+    "portfolio portfolio"
+    "log log";
+}
+
+@media (min-width: 1200px) {
+  .container {
+    grid-template-areas:
+      "header header"
+      "balance balance"
+      "actions chart"
+      "tradingview tradingview"
+      "portfolio log";
+  }
+}
+
+h1 {
+  font-size: 2.8rem;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 15px;
+  letter-spacing: 1px;
+  text-align: center;
+  grid-area: header;
+}
+
+.card {
+  background-color: var(--card-bg);
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.card h2 {
+  font-size: 1.6rem;
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-primary);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.balance-card {
+  grid-area: balance;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, #1e3c72, #2a5298);
+  padding: 30px;
+}
+
+#balance {
+  font-size: 2.4rem;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.input-group {
+  margin-bottom: 22px;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.input-group input,
+.input-group select {
+  width: 100%;
+  padding: 15px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background-color: #0f172a;
+  color: var(--text-primary);
+  font-size: 1.1rem;
+}
+
+/* 🔄 統一 select 樣式 */
+.input-group select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+/* 📋 表單內距調整 */
+form .input-group {
+  margin-bottom: 20px;
+}
+
+button,
+.buy-btn,
+.sell-btn,
+.btn {
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: none;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.buy-btn {
+  background: linear-gradient(135deg, var(--secondary), var(--secondary-dark));
+  color: white;
+  margin-right: 10px;
+}
+
+.sell-btn {
+  background: linear-gradient(135deg, var(--danger), var(--danger-dark));
+  color: white;
+}
+
+.btn {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+}
+
+/* 🖱️ Hover 效果加強 */
+.buy-btn:hover {
+  background: linear-gradient(135deg, var(--secondary-dark), var(--secondary));
+  filter: brightness(1.1);
+}
+
+.sell-btn:hover {
+  background: linear-gradient(135deg, var(--danger-dark), var(--danger));
+  filter: brightness(1.1);
+}
+
+.btn:hover {
+  background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+  filter: brightness(1.1);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--card-bg);
+  color: var(--text-primary);
+}
+
+th, td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+/* 🧑 帳號顯示區塊 */
+.account-info {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background-color: #ffffffcc;
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.1);
+  color: #222222;
+  font-weight: bold;
+  font-family: "Segoe UI", "微軟正黑體", sans-serif;
+  font-size: 0.95rem;
+  z-index: 999;
+}
+
+.account-info strong {
+  color: #222222;
+}
+
+.account-info a {
+  color: #5c27fe;
+  text-decoration: none;
+  margin-left: 12px;
+  font-weight: bold;
+}
+
+.account-info a:hover {
+  text-decoration: underline;
+}
+
+/* 🔒 登入頁容器（深色） */
+.login-container {
+  max-width: 420px;
+  margin: 100px auto;
+  padding: 30px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: 0 0 12px rgba(0,0,0,0.3);
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.login-container h2 {
+  margin-bottom: 20px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.login-container input {
+  width: 85%;
+  padding: 12px;
+  margin: 10px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: #0f172a;
+  color: var(--text-primary);
+}
+
+.login-container button {
+  padding: 10px 22px;
+  background-color: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.login-container button:hover {
+  background-color: var(--primary-dark);
+}

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>登入</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% if current_user.is_authenticated %}
+  <div class="account-info">
+    👤 帳號：<strong>{{ current_user.username }}</strong>
+    <a href="{{ url_for('logout') }}">登出</a>
+  </div>
+  {% endif %}
+
+  <div class="login-container">
+    <h2>登入系統</h2>
+    <form method="POST">
+      <input type="text" name="username" placeholder="帳號" required><br>
+      <input type="password" name="password" placeholder="密碼" required><br>
+      <button type="submit">登入</button>
+    </form>
+    <p style="margin-top: 12px;">還沒註冊？ <a href="{{ url_for('register') }}">建立帳號</a></p>
+  </div>
+</body>
+</html>

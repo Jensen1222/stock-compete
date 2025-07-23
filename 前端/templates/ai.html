@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台積電(TSMC)股票分析問答系統</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Microsoft JhengHei', Arial, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #005b96, #011f4b);
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(90deg, #1a3e72, #0a1f40);
+            color: white;
+            padding: 25px;
+            text-align: center;
+            position: relative;
+        }
+        
+        .tsmc-logo {
+            width: 60px;
+            height: 60px;
+            margin-bottom: 15px;
+        }
+        
+        header h1 {
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .stock-info {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 1.1rem;
+        }
+        
+        .stock-price {
+            font-weight: bold;
+            color: #ffd700;
+        }
+        
+        .content {
+            display: flex;
+            padding: 25px;
+            gap: 25px;
+        }
+        
+        @media (max-width: 768px) {
+            .content {
+                flex-direction: column;
+            }
+        }
+        
+        .input-section, .output-section {
+            flex: 1;
+        }
+        
+        .section-title {
+            font-size: 1.3rem;
+            margin-bottom: 15px;
+            color: #1a3e72;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #1a3e72;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .input-area {
+            background: #f5f9ff;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        .question-input {
+            width: 100%;
+            height: 120px;
+            padding: 15px;
+            border: 2px solid #d1e0ff;
+            border-radius: 10px;
+            font-size: 1rem;
+            resize: none;
+            transition: border 0.3s;
+            margin-bottom: 15px;
+        }
+        
+        .question-input:focus {
+            outline: none;
+            border-color: #1a3e72;
+            box-shadow: 0 0 0 3px rgba(26, 62, 114, 0.2);
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .submit-btn {
+            background: linear-gradient(90deg, #1a3e72, #0a1f40);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .submit-btn:hover {
+            background: linear-gradient(90deg, #0a1f40, #1a3e72);
+            transform: translateY(-2px);
+        }
+        
+        .submit-btn:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .examples {
+            background: #e6f0ff;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        
+        .examples h3 {
+            margin-bottom: 10px;
+            color: #1a3e72;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .example-list {
+            list-style-type: none;
+        }
+        
+        .example-list li {
+            padding: 8px 12px;
+            background: white;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 4px solid #1a3e72;
+        }
+        
+        .example-list li:hover {
+            background: #d1e0ff;
+            transform: translateX(3px);
+        }
+        
+        .response-container {
+            background: #f5f9ff;
+            border-radius: 12px;
+            padding: 20px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        .response-area {
+            flex: 1;
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            min-height: 200px;
+            overflow-y: auto;
+            border: 2px solid #d1e0ff;
+            margin-bottom: 15px;
+        }
+        
+        .loading {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            padding: 20px;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(26, 62, 114, 0.2);
+            border-top: 4px solid #1a3e72;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .response-text {
+            line-height: 1.7;
+        }
+        
+        .response-text p {
+            margin-bottom: 12px;
+        }
+        
+        .stock-data {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .data-item {
+            background: #e6f0ff;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        
+        .data-label {
+            font-weight: bold;
+            color: #1a3e72;
+            margin-bottom: 5px;
+        }
+        
+        .data-value {
+            font-size: 1.1rem;
+        }
+        
+        .positive {
+            color: #27ae60;
+        }
+        
+        .negative {
+            color: #e74c3c;
+        }
+        
+        .error-message {
+            color: #e74c3c;
+            background: rgba(231, 76, 60, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            display: none;
+            margin-top: 10px;
+        }
+        
+        footer {
+            background: #0a1f40;
+            color: white;
+            text-align: center;
+            padding: 15px;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/TSMC_logo.svg/1200px-TSMC_logo.svg.png" alt="TSMC Logo" class="tsmc-logo">
+            <h1>台積電(TSMC)股票分析</h1>
+            <p>獲取台積電最新股票資訊、財務分析和投資建議</p>
+            <div class="stock-info">
+                <div>股票代號: <span class="stock-price">2330.TW</span></div>
+                <div>當前價格: <span class="stock-price">NT$785</span> <span class="positive">(+2.3%)</span></div>
+                <div>市值: <span class="stock-price">NT$20.36兆</span></div>
+            </div>
+        </header>
+        
+        <div class="content">
+            <div class="input-section">
+                <h2 class="section-title"><i class="fas fa-chart-line"></i> 股票查詢</h2>
+                <div class="input-area">
+                    <textarea class="question-input" placeholder="請輸入關於台積電的問題，例如：台積電的財務狀況如何？未來成長潛力？"></textarea>
+                    
+                    <div class="controls">
+                        <button class="submit-btn">
+                            <i class="fas fa-search"></i> 查詢
+                        </button>
+                    </div>
+                    
+                    <div class="examples">
+                        <h3><i class="fas fa-lightbulb"></i> 示例問題</h3>
+                        <ul class="example-list">
+                            <li>台積電最近的財務表現如何？</li>
+                            <li>台積電的競爭優勢是什麼？</li>
+                            <li>分析台積電的技術領先地位</li>
+                            <li>台積電未來的成長潛力如何？</li>
+                            <li>台積電的主要客戶有哪些？</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="output-section">
+                <h2 class="section-title"><i class="fas fa-file-alt"></i> 分析結果</h2>
+                <div class="response-container">
+                    <div class="stock-data">
+                        <div class="data-item">
+                            <div class="data-label">當前股價</div>
+                            <div class="data-value">NT$785.00</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="data-label">今日漲跌</div>
+                            <div class="data-value positive">+2.3% (+NT$17.5)</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="data-label">本益比 (P/E)</div>
+                            <div class="data-value">18.7</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="data-label">股息率</div>
+                            <div class="data-value">1.8%</div>
+                        </div>
+                    </div>
+                    
+                    <div class="response-area">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>分析中，請稍候...</p>
+                        </div>
+                        <div class="response-text">
+                            <p>您好！這裡是台積電(TSMC)股票分析助手。</p>
+                            <p>台積電(台灣積體電路製造公司)是全球最大的專業積體電路製造服務公司，在晶圓代工市場佔有約60%的份額。</p>
+                            <p>您可以在左側輸入關於台積電的任何問題，例如：</p>
+                            <ul>
+                                <li>財務表現與營收成長</li>
+                                <li>技術發展與製程進度</li>
+                                <li>競爭優勢與市場地位</li>
+                                <li>投資風險與未來展望</li>
+                            </ul>
+                            <p>也可以直接點擊下方的示例問題快速查詢。</p>
+                        </div>
+                    </div>
+                    
+                    <div class="error-message" id="error-msg">
+                        發生錯誤：無法取得資料。請檢查網路連接後重試。
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>資料僅供參考，不構成投資建議 | 數據更新時間: 2023年11月15日</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const questionInput = document.querySelector('.question-input');
+            const submitBtn = document.querySelector('.submit-btn');
+            const responseText = document.querySelector('.response-text');
+            const loading = document.querySelector('.loading');
+            const errorMsg = document.getElementById('error-msg');
+            const exampleItems = document.querySelectorAll('.example-list li');
+            
+            // 示例問題點擊事件
+            exampleItems.forEach(item => {
+                item.addEventListener('click', function() {
+                    questionInput.value = this.textContent;
+                });
+            });
+            
+            // 提交問題
+            submitBtn.addEventListener('click', async function() {
+                const question = questionInput.value.trim();
+                
+                if (!question) {
+                    showError('請輸入問題內容');
+                    return;
+                }
+                
+                // 顯示加載狀態
+                loading.style.display = 'flex';
+                responseText.style.display = 'none';
+                errorMsg.style.display = 'none';
+                submitBtn.disabled = true;
+                
+                try {
+                    // 模擬API請求延遲
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    
+                    // 模擬API響應 - 在實際應用中應替換為真實的API調用
+                    const response = await simulateTSMCAPI(question);
+                    
+                    // 顯示響應
+                    responseText.innerHTML = response.answer;
+                    
+                    // 更新股票數據
+                    updateStockData(response.stockData);
+                } catch (error) {
+                    showError('無法取得資料：' + error.message);
+                } finally {
+                    // 隱藏加載狀態
+                    loading.style.display = 'none';
+                    responseText.style.display = 'block';
+                    submitBtn.disabled = false;
+                }
+            });
+            
+            // 模擬台積電API響應
+            function simulateTSMCAPI(question) {
+                return new Promise((resolve, reject) => {
+                    // 10%概率模擬失敗
+                    if (Math.random() < 0.1) {
+                        reject(new Error('API請求超時'));
+                        return;
+                    }
+                    
+                    // 根據問題生成模擬回答
+                    const responses = {
+                        "台積電最近的財務表現如何？": `
+                            <h3>台積電最新財務表現分析 (2023年第三季)</h3>
+                            <div class="stock-data" style="margin-top: 15px;">
+                                <div class="data-item">
+                                    <div class="data-label">季度營收</div>
+                                    <div class="data-value">NT$5,467億</div>
+                                </div>
+                                <div class="data-item">
+                                    <div class="data-label">季度淨利</div>
+                                    <div class="data-value">NT$2,110億</div>
+                                </div>
+                                <div class="data-item">
+                                    <div class="data-label">毛利率</div>
+                                    <div class="data-value">54.3%</div>
+                                </div>
+                                <div class="data-item">
+                                    <div class="data-label">營業利益率</div>
+                                    <div class="data-value">41.7%</div>
+                                </div>
+                            </div>
+                            <p>台積電2023年第三季財務表現：</p>
+                            <ul>
+                                <li>營收較上季成長13.7%，但較去年同期下降10.8%</li>
+                                <li>淨利潤率維持在38.6%的高水準</li>
+                                <li>3奈米製程貢獻營收約6%，5奈米佔37%，7奈米佔16%</li>
+                                <li>高效能運算(HPC)業務佔比達42%，智慧手機佔39%</li>
+                            </ul>
+                            <p>管理層預期第四季營收將介於5,880億至6,160億新台幣之間，毛利率預計在51.5%至53.5%。</p>
+                        `,
+                        "台積電的競爭優勢是什麼？": `
+                            <h3>台積電的競爭優勢分析</h3>
+                            <p>台積電作為全球晶圓代工龍頭，擁有以下核心競爭優勢：</p>
+                            <p><strong>1. 技術領先地位</strong></p>
+                            <ul>
+                                <li>全球最先進的製程技術：已量產3奈米，2奈米預計2025年量產</li>
+                                <li>研發投入佔營收8-10%，2023年研發支出預計達54億美元</li>
+                                <li>擁有超過57,000項專利</li>
+                            </ul>
+                            <p><strong>2. 規模經濟與客戶信任</strong></p>
+                            <ul>
+                                <li>全球市佔率約60%，遠超三星(12%)和格芯(6%)</li>
+                                <li>服務超過500家客戶，包括蘋果、NVIDIA、AMD、高通等</li>
+                                <li>純晶圓代工模式，不與客戶競爭</li>
+                            </ul>
+                            <p><strong>3. 卓越的製造能力</strong></p>
+                            <ul>
+                                <li>良率業界領先，3奈米良率已達80%以上</li>
+                                <li>全球產能佈局：台灣為主，美國亞利桑那州廠預計2024年量產</li>
+                                <li>自動化與智能製造水平全球第一</li>
+                            </ul>
+                        `,
+                        "分析台積電的技術領先地位": `
+                            <h3>台積電技術領先地位分析</h3>
+                            <p>台積電在先進製程技術上持續保持領先：</p>
+                            <p><strong>製程技術路線圖</strong></p>
+                            <ul>
+                                <li><strong>3奈米(N3):</strong> 已於2022年量產，相比5奈米性能提升10-15%，功耗降低25-30%</li>
+                                <li><strong>2奈米(N2):</strong> 預計2025年量產，將採用GAAFET電晶體結構</li>
+                                <li><strong>1.4奈米(A14):</strong> 研發中，預計2027-2028年推出</li>
+                            </ul>
+                            <p><strong>封裝技術優勢</strong></p>
+                            <ul>
+                                <li>CoWoS (Chip on Wafer on Substrate) 2.5D封裝技術</li>
+                                <li>InFO (Integrated Fan-Out) 先進封裝</li>
+                                <li>SoIC (System on Integrated Chips) 3D封裝技術</li>
+                            </ul>
+                            <p><strong>技術研發投入</strong></p>
+                            <ul>
+                                <li>2023年資本支出約320-360億美元</li>
+                                <li>全球擁有超過5,000名研發人員</li>
+                                <li>與學術機構及研究單位緊密合作</li>
+                            </ul>
+                            <p>台積電的技術領先預計至少可維持到2025年，主要競爭對手三星和英特爾在良率和量產能力上仍有差距。</p>
+                        `,
+                        "台積電未來的成長潛力如何？": `
+                            <h3>台積電未來成長潛力分析</h3>
+                            <p>台積電未來成長主要來自以下驅動因素：</p>
+                            <p><strong>1. 先進製程需求持續增長</strong></p>
+                            <ul>
+                                <li>AI/高效能運算(HPC)晶片需求爆發</li>
+                                <li>5G/6G通訊技術升級</li>
+                                <li>汽車電子與自動駕駛發展</li>
+                            </ul>
+                            <p><strong>2. 產能擴張計劃</strong></p>
+                            <ul>
+                                <li>台灣南部科學園區3奈米擴產</li>
+                                <li>美國亞利桑那州廠：第一期4奈米(2024年)，第二期3奈米(2026年)</li>
+                                <li>日本熊本廠：22/28奈米特殊製程(2024年)</li>
+                                <li>德國德勒斯登廠：評估中</li>
+                            </ul>
+                            <p><strong>3. 長期財務目標</strong></p>
+                            <ul>
+                                <li>2023-2027年營收CAGR預計15-20%</li>
+                                <li>長期毛利率目標維持53%以上</li>
+                                <li>資本支出維持在營收30-35%</li>
+                            </ul>
+                            <p><strong>潛在風險</strong></p>
+                            <ul>
+                                <li>地緣政治因素影響</li>
+                                <li>全球半導體週期波動</li>
+                                <li>人才競爭加劇</li>
+                            </ul>
+                            <p>分析師普遍預期台積電2025年營收可達850-900億美元，較2022年成長約40-50%。</p>
+                        `,
+                        "台積電的主要客戶有哪些？": `
+                            <h3>台積電主要客戶分析</h3>
+                            <p>台積電服務全球超過500家客戶，主要客戶包括：</p>
+                            <p><strong>前五大客戶 (佔營收約50%)</strong></p>
+                            <ul>
+                                <li><strong>蘋果 (Apple):</strong> 約佔25-30%營收，主要生產A系列和M系列處理器</li>
+                                <li><strong>超微 (AMD):</strong> 約佔10%營收，生產CPU和GPU</li>
+                                <li><strong>輝達 (NVIDIA):</strong> 約佔8%營收，生產AI和圖形處理器</li>
+                                <li><strong>高通 (Qualcomm):</strong> 約佔7%營收，生產手機處理器和基頻晶片</li>
+                                <li><strong>博通 (Broadcom):</strong> 約佔5%營收，生產網路和數據中心晶片</li>
+                            </ul>
+                            <p><strong>其他重要客戶</strong></p>
+                            <ul>
+                                <li>聯發科 (MediaTek)</li>
+                                <li>英特爾 (Intel) - 部分GPU產品</li>
+                                <li>索尼 (Sony) - 遊戲機處理器</li>
+                                <li>特斯拉 (Tesla) - 自動駕駛晶片</li>
+                                <li>亞馬遜 (Amazon) - AWS自研晶片</li>
+                            </ul>
+                            <p>台積電客戶結構分散，最大客戶蘋果佔比不超過30%，降低了單一客戶風險。近年來高效能運算(HPC)客戶比重持續增加。</p>
+                        `
+                    };
+                    
+                    // 如果問題匹配預設問題，返回預設回答，否則生成通用回答
+                    const answer = responses[question] || generateTSMCAnswer(question);
+                    
+                    // 模擬股票數據更新
+                    const priceChange = (Math.random() * 4 - 2).toFixed(2);
+                    const isPositive = parseFloat(priceChange) >= 0;
+                    const newPrice = (785 + Math.random() * 20 - 10).toFixed(2);
+                    
+                    resolve({
+                        answer: answer,
+                        stockData: {
+                            price: newPrice,
+                            change: priceChange,
+                            isPositive: isPositive
+                        }
+                    });
+                });
+            }
+            
+            // 生成台積電相關通用回答
+            function generateTSMCAnswer(question) {
+                const topics = [
+                    "財務表現", "技術發展", "競爭優勢", "客戶結構", 
+                    "產能規劃", "研發投入", "市場前景", "風險因素"
+                ];
+                const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+                
+                return `
+                    <h3>關於"${question}"的分析</h3>
+                    <p>台積電在${randomTopic}方面有以下特點：</p>
+                    <ul>
+                        <li>${getRandomDetail(randomTopic, 1)}</li>
+                        <li>${getRandomDetail(randomTopic, 2)}</li>
+                        <li>${getRandomDetail(randomTopic, 3)}</li>
+                    </ul>
+                    <p>如需更詳細的${randomTopic}分析，您可以提出更具體的問題。</p>
+                `;
+            }
+            
+            // 獲取隨機詳細資訊
+            function getRandomDetail(topic, index) {
+                const details = {
+                    "財務表現": [
+                        "2023年第三季營收達5,467億新台幣",
+                        "毛利率維持在54%以上的高水準",
+                        "資本支出佔營收約35%"
+                    ],
+                    "技術發展": [
+                        "3奈米製程已進入量產階段",
+                        "2奈米製程研發進展順利",
+                        "先進封裝技術領先競爭對手"
+                    ],
+                    "競爭優勢": [
+                        "全球市佔率約60%",
+                        "客戶信任度高，服務超過500家客戶",
+                        "研發投入業界領先"
+                    ],
+                    "客戶結構": [
+                        "前五大客戶佔營收約50%",
+                        "蘋果是最大單一客戶，佔25-30%營收",
+                        "高效能運算(HPC)客戶比重持續增加"
+                    ],
+                    "產能規劃": [
+                        "台灣持續擴充先進製程產能",
+                        "美國亞利桑那州廠預計2024年量產",
+                        "全球多元化產能佈局"
+                    ],
+                    "研發投入": [
+                        "2023年研發支出預計達54億美元",
+                        "擁有超過57,000項專利",
+                        "研發人員超過5,000名"
+                    ],
+                    "市場前景": [
+                        "AI/HPC需求將驅動未來成長",
+                        "5G/6G通訊技術升級帶來機會",
+                        "汽車電子市場潛力大"
+                    ],
+                    "風險因素": [
+                        "地緣政治風險需持續關注",
+                        "全球半導體週期波動",
+                        "人才競爭日益激烈"
+                    ]
+                };
+                
+                return details[topic][index - 1] || details[topic][0];
+            }
+            
+            // 更新股票數據
+            function updateStockData(data) {
+                const priceElements = document.querySelectorAll('.stock-price');
+                const changeElement = document.querySelector('.stock-info .positive, .stock-info .negative');
+                
+                priceElements[1].textContent = `NT$${data.price}`;
+                
+                if (changeElement) {
+                    changeElement.textContent = `(${data.isPositive ? '+' : ''}${data.change}%)`;
+                    changeElement.className = data.isPositive ? 'positive' : 'negative';
+                }
+            }
+            
+            // 顯示錯誤信息
+            function showError(message) {
+                errorMsg.textContent = message;
+                errorMsg.style.display = 'block';
+                
+                // 3秒後自動隱藏錯誤信息
+                setTimeout(() => {
+                    errorMsg.style.display = 'none';
+                }, 3000);
+            }
+        });
+    </script>
+</body>
+</html>
