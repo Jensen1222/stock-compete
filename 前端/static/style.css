@@ -292,4 +292,20 @@ input {
   border-radius: 8px;
 }
 
+input#symbolInput {
+  background-color: #1e293b;
+  color: white;
+  border: 1px solid #334155;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+button {
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
 
