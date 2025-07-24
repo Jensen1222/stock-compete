@@ -276,3 +276,10 @@ li {
 .login-container button:hover {
   background-color: var(--primary-dark);
 }
+
+input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #1f2937 inset !important;
+  -webkit-text-fill-color: white !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
