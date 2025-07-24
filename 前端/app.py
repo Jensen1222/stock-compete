@@ -15,7 +15,11 @@ import os
 load_dotenv()
 
 # 初始化 Flask 應用程式
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    static_folder="static",         # 明確指定 static 路徑
+    template_folder="templates"     # 明確指定 HTML 模板資料夾
+)
 CORS(app)
 
 # 設定環境變數
