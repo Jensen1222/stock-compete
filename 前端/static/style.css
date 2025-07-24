@@ -278,8 +278,18 @@ li {
 }
 
 input:-webkit-autofill {
-  -webkit-box-shadow: 0 0 0 1000px #1f2937 inset !important;
+  -webkit-box-shadow: 0 0 0px 1000px #0f172a inset !important; /* 深藍黑背景 */
   -webkit-text-fill-color: white !important;
   transition: background-color 5000s ease-in-out 0s;
+  border-radius: 8px;
 }
+
+input {
+  background-color: #0f172a;
+  color: white;
+  border: 1px solid #334155;
+  padding: 10px;
+  border-radius: 8px;
+}
+
 
