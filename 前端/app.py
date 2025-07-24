@@ -57,7 +57,7 @@ def index():
     return render_template("index.html")
 
 def home():
-    return render_template('ai.html')"
+    return render_template('ai.html')
 
 # Price history
 @app.route("/history")
