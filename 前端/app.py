@@ -101,6 +101,15 @@ def get_price():
     except Exception as e:
         return jsonify(success=False, message="查詢失敗，請稍後再試")
 
+def get_real_time_price(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        price = stock.history(period="1d")["Close"].iloc[-1]
+        return float(price)
+    except Exception as e:
+        print("⚠️ 無法取得價格：", e)
+        return None
+        
 # Buy stock
 @app.route("/buy", methods=["POST"])
 @login_required
@@ -138,10 +147,6 @@ def buy():
     db.session.commit()
 
     return jsonify(success=True)
-
-
-
-
 
 # Sell stock
 @app.route("/sell", methods=["POST"])
