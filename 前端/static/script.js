@@ -5,8 +5,12 @@ let historyChart; // 用來畫歷史價格趨勢圖表
 
 // 格式化貨幣
 function formatCurrency(v) {
-  return '$' + parseFloat(v).toFixed(2);
+  return '$' + Number(v).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 }
+
 
 // 即時價格取得
 function getRealTimePrice(ticker, callback) {
@@ -163,17 +167,37 @@ function renderPortfolio() {
   for (const ticker in portfolio) {
     const pos = portfolio[ticker];
     const price = priceData[ticker]?.slice(-1)[0] || pos.costAvg;
+    const costTotal = pos.costAvg * pos.qty;
+    const marketValue = price * pos.qty;
+    const profit = marketValue - costTotal;
+    const profitPct = pos.costAvg > 0 ? (profit / costTotal) * 100 : 0;
+
+    // 決定文字顏色
+    const profitColor = profit >= 0 ? 'style="color: green;"' : 'style="color: red;"';
+    const profitSign = profit >= 0 ? '+' : '-';
+    const profitText = `${profitSign} $${Math.abs(profit).toFixed(2)} (${profitSign}${Math.abs(profitPct).toFixed(2)}%)`;
+
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${ticker}</td>
-      <td>${(pos.qty / 1000).toFixed(2)} 張</td>
-      <td>${formatCurrency(pos.costAvg)}</td>
-      <td>${formatCurrency(price)}</td>
-      <td>${formatCurrency(price * pos.qty)}</td>
-    `;
+     tr.innerHTML = `
+       <td>${ticker}</td>
+       <td>${Math.floor(pos.qty / 1000)} 張 ${pos.qty % 1000} 股</td>
+       <td>${formatCurrency(pos.costAvg)}</td>
+       <td>${formatCurrency(price)}</td>
+       <td>${formatCurrency(marketValue)}</td>
+       <td class="profit-cell" style="color: ${profit >= 0 ? 'green' : 'red'};">
+         ${profit >= 0 ? '+' : '-'} $${Math.abs(profit).toFixed(2)} (${profitPct >= 0 ? '+' : '-'}${Math.abs(profitPct).toFixed(2)}%)
+       </td>
+
+
+   `;
+
     tbody.appendChild(tr);
   }
 }
+
+
+
+
 
 // 更新總資產與表格
 function renderAll() {

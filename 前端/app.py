@@ -10,6 +10,7 @@ from flask_cors import CORS
 import openai
 from dotenv import load_dotenv
 import os
+from decimal import Decimal, ROUND_HALF_UP
 
 # 載入 .env
 load_dotenv()
@@ -235,38 +236,52 @@ def trade():
     return jsonify({"success": True, "message": f"{mode}交易完成"})
 
 
+
 # Portfolio API
 @app.route("/api/portfolio")
 @login_required
 def api_portfolio():
-    trades = Trade.query.filter_by(user_id=current_user.id).all()
-    balance = app.config["INITIAL_BALANCE"]
+    trades = Trade.query.filter_by(user_id=current_user.id).order_by(Trade.created_at).all()
+    balance = Decimal(app.config["INITIAL_BALANCE"])
     portfolio = {}
+
     for t in trades:
-        qty = t.quantity
-        cost = qty * t.price
+        qty = Decimal(t.quantity)
+        price = Decimal(str(t.price))  # 避免 float 精度問題
+        cost = qty * price
+
         if t.trade_type == "買入":
             balance -= cost
             if t.ticker not in portfolio:
-                portfolio[t.ticker] = {"qty": 0, "cost": 0.0}
+                portfolio[t.ticker] = {"qty": Decimal("0"), "cost": Decimal("0")}
             portfolio[t.ticker]["qty"] += qty
             portfolio[t.ticker]["cost"] += cost
+
         elif t.trade_type == "賣出":
             balance += cost
-            if t.ticker in portfolio:
+            if t.ticker in portfolio and portfolio[t.ticker]["qty"] > 0:
+                avg_cost = portfolio[t.ticker]["cost"] / portfolio[t.ticker]["qty"]
+                portfolio[t.ticker]["cost"] -= avg_cost * qty
                 portfolio[t.ticker]["qty"] -= qty
+                # 防止負值出現
+                if portfolio[t.ticker]["qty"] <= 0:
+                    portfolio[t.ticker]["qty"] = Decimal("0")
+                    portfolio[t.ticker]["cost"] = Decimal("0")
+
     result = {
-        "balance": round(balance, 2),
+        "balance": float(balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
         "portfolio": [
             {
                 "ticker": t,
-                "quantity": data["qty"],
-                "costAvg": round(data["cost"] / data["qty"], 2) if data["qty"] > 0 else 0
+                "quantity": float(data["qty"]),
+                "costAvg": float((data["cost"] / data["qty"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if data["qty"] > 0 else 0.0
             }
             for t, data in portfolio.items() if data["qty"] > 0
         ]
     }
+
     return jsonify(result)
+
 
 # Ranking
 @app.route("/ranking")

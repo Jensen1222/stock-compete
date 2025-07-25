@@ -309,3 +309,13 @@ button {
   cursor: pointer;
 }
 
+.profit-cell {
+  text-align: left;         /* 或 right，根據你想要的對齊方式 */
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  min-width: 180px;         /* 可選，加強對齊感 */
+}
+
+
+
+
