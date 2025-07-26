@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import os
 from decimal import Decimal, ROUND_HALF_UP
 import pandas as pd
-
+from collections import defaultdict, deque
 
 # 載入 .env
 load_dotenv()
@@ -264,7 +264,11 @@ def trade():
 def api_portfolio():
     trades = Trade.query.filter_by(user_id=current_user.id).order_by(Trade.created_at).all()
     balance = Decimal(app.config["INITIAL_BALANCE"])
-    portfolio = {}
+    
+    portfolio = defaultdict(lambda: {
+        "lots": deque(),   # 每筆買入記錄 (quantity, price)
+        "qty": Decimal("0"),
+    })
 
     for t in trades:
         qty = Decimal(t.quantity)
@@ -273,35 +277,49 @@ def api_portfolio():
 
         if t.trade_type == "買入":
             balance -= cost
-            if t.ticker not in portfolio:
-                portfolio[t.ticker] = {"qty": Decimal("0"), "cost": Decimal("0")}
+            portfolio[t.ticker]["lots"].append((qty, price))
             portfolio[t.ticker]["qty"] += qty
-            portfolio[t.ticker]["cost"] += cost
 
         elif t.trade_type == "賣出":
             balance += cost
-            if t.ticker in portfolio and portfolio[t.ticker]["qty"] > 0:
-                avg_cost = portfolio[t.ticker]["cost"] / portfolio[t.ticker]["qty"]
-                portfolio[t.ticker]["cost"] -= avg_cost * qty
-                portfolio[t.ticker]["qty"] -= qty
-                # 防止負值出現
-                if portfolio[t.ticker]["qty"] <= 0:
-                    portfolio[t.ticker]["qty"] = Decimal("0")
-                    portfolio[t.ticker]["cost"] = Decimal("0")
+            remaining = qty
+            lots = portfolio[t.ticker]["lots"]
+            portfolio[t.ticker]["qty"] -= qty
+
+            # FIFO: 先把最早買入的扣掉
+            while remaining > 0 and lots:
+                lot_qty, lot_price = lots[0]
+                if lot_qty > remaining:
+                    lots[0] = (lot_qty - remaining, lot_price)
+                    remaining = Decimal("0")
+                else:
+                    remaining -= lot_qty
+                    lots.popleft()
+
+            # 若已全部賣光，清除資料
+            if portfolio[t.ticker]["qty"] <= 0:
+                portfolio[t.ticker]["qty"] = Decimal("0")
+                portfolio[t.ticker]["lots"].clear()
 
     result = {
         "balance": float(balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
-        "portfolio": [
-            {
-                "ticker": t,
-                "quantity": float(data["qty"]),
-                "costAvg": float((data["cost"] / data["qty"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if data["qty"] > 0 else 0.0
-            }
-            for t, data in portfolio.items() if data["qty"] > 0
-        ]
+        "portfolio": []
     }
 
+    for ticker, data in portfolio.items():
+        total_qty = data["qty"]
+        if total_qty == 0:
+            continue
+        total_cost = sum(q * p for q, p in data["lots"])
+        avg_cost = total_cost / total_qty
+        result["portfolio"].append({
+            "ticker": ticker,
+            "quantity": float(total_qty),
+            "costAvg": float(avg_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        })
+
     return jsonify(result)
+
 
 
 # Ranking
