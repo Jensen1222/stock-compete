@@ -66,7 +66,7 @@
           <tr>
             <td>{{ loop.index }}</td>
             <td>{{ user.username }}</td>
-            <td>${{ '%.2f' | format(user.total_value) }}</td>
+            <td>${{ "{:,.2f}".format(user.total_value) }}</td>
           </tr>
         {% endfor %}
       </tbody>

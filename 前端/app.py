@@ -11,6 +11,8 @@ import openai
 from dotenv import load_dotenv
 import os
 from decimal import Decimal, ROUND_HALF_UP
+import pandas as pd
+
 
 # 載入 .env
 load_dotenv()
@@ -64,52 +66,71 @@ def home():
 @app.route("/history")
 @login_required
 def get_history():
+    
     ticker = request.args.get("ticker", "").strip()
     if not ticker:
         return jsonify(success=False, message="缺少股票代碼")
+
     try:
-        data = yf.Ticker(f"{ticker}.TW").history(period="1mo")
+        # 試著用 .TW，若 404 就用 .TWO
+        try:
+            data = yf.Ticker(f"{ticker}.TW").history(period="1mo")
+            if data.empty:
+                raise Exception("empty")
+        except:
+            data = yf.Ticker(f"{ticker}.TWO").history(period="1mo")
+            if data.empty:
+                raise Exception("empty")
 
-        # ✅ reset_index 先做，保留 Date 為欄位
         data = data.reset_index()[["Date", "Close"]].dropna()
-
-        # ✅ 格式化日期
-        data["Date"] = data["Date"].dt.strftime("%Y-%m-%d")
+        data["Date"] = pd.to_datetime(data["Date"]).dt.strftime("%Y-%m-%d")
 
         result = data.to_dict(orient="records")
         return jsonify(success=True, data=result)
+
     except Exception as e:
-        return jsonify(success=False, message=str(e))
+        return jsonify(success=False, message=f"查詢歷史價格失敗：{str(e)}")
 
 
-# Real-time price
+
+
 @app.route("/price")
 @login_required
 def get_price():
     ticker = request.args.get("ticker", "").strip()
     if not ticker.isdigit():
         return jsonify(success=False, message="股票代碼應為數字")
+
+    # 嘗試從 TWSE 抓取
     try:
         url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw"
         res = requests.get(url)
         data = res.json()
         msg_array = data.get("msgArray", [])
         if msg_array and "z" in msg_array[0]:
-            price = float(msg_array[0]["z"])
-            return jsonify(success=True, price=price)
-        else:
-            return jsonify(success=False, message="查無價格資料")
+            z = msg_array[0]["z"]
+            if z and z != "-":
+                price = float(z)
+                return jsonify(success=True, price=price)
     except Exception as e:
-        return jsonify(success=False, message="查詢失敗，請稍後再試")
+        print(f"⚠️ TWSE 抓取失敗：{e}")
 
-def get_real_time_price(ticker):
-    try:
-        stock = yf.Ticker(ticker)
-        price = stock.history(period="1d")["Close"].iloc[-1]
-        return float(price)
-    except Exception as e:
-        print("⚠️ 無法取得價格：", e)
-        return None
+    # 改用 Yahoo 抓（順序先 TWO 再 TW）
+    for suffix in [".TWO", ".TW"]:
+        try:
+            stock = yf.Ticker(ticker + suffix)
+            hist = stock.history(period="1d")
+            if not hist.empty:
+                price = float(hist["Close"].iloc[-1])
+                return jsonify(success=True, price=price)
+        except Exception as e:
+            print(f"⚠️ Yahoo 抓 {ticker + suffix} 失敗：{e}")
+
+    return jsonify(success=False, message="查無價格資料（TWSE & Yahoo）")
+
+
+
+
         
 # Buy stock
 @app.route("/buy", methods=["POST"])
@@ -292,12 +313,13 @@ def ranking():
 
     def get_live_price(ticker):
         try:
-            url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw"
-            res = requests.get(url)
-            data = res.json()
-            msg_array = data.get("msgArray", [])
-            if msg_array and "z" in msg_array[0]:
-                return float(msg_array[0]["z"])
+            for market in ['tse', 'otc']:
+                url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{ticker}.tw"
+                res = requests.get(url)
+                data = res.json()
+                msg_array = data.get("msgArray", [])
+                if msg_array and "z" in msg_array[0] and msg_array[0]["z"] != "-":
+                    return float(msg_array[0]["z"])
         except:
             pass
         return None
@@ -328,8 +350,11 @@ def ranking():
             "username": user.username,
             "total_value": round(total_value, 2)
         })
+
+    # ⚠️ 確保最後這一行一定要有：
     ranking_data.sort(key=lambda x: x["total_value"], reverse=True)
     return render_template("ranking.html", ranking_data=ranking_data)
+
 
 # Quiz with database save
 @app.route("/quiz", methods=["GET", "POST"])
@@ -432,6 +457,26 @@ def logout():
 def trades():
     trade_records = Trade.query.filter_by(user_id=current_user.id).order_by(Trade.created_at.desc()).all()
     return render_template("trades.html", trades=trade_records)
+
+# trading view
+@app.route("/api/market_type")
+def get_market_type():
+    ticker = request.args.get("ticker", "").strip()
+    if not ticker.isdigit() or len(ticker) != 4:
+        return jsonify(success=False, message="股票代碼格式錯誤")
+
+    try:
+        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw|otc_{ticker}.tw"
+        res = requests.get(url)
+        data = res.json().get("msgArray", [])
+
+        for stock in data:
+            if stock["c"] == ticker:
+                market = stock["ex"]  # 會是 'tse' 或 'otc'
+                return jsonify(success=True, market=market.upper())
+        return jsonify(success=False, message="查無此股票代碼")
+    except Exception as e:
+        return jsonify(success=False, message=f"查詢失敗：{str(e)}")
 
 
 @app.route("/ai", methods=["GET", "POST"])

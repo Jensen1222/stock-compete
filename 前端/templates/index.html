@@ -92,11 +92,11 @@
   </div>
 
 <div class="card">
-  <h2>TradingView 即時圖表</h2>
+  <h2>📈 TradingView 即時圖表</h2>
 
   <div style="margin-bottom: 10px;">
     <input type="text" id="symbolInput" placeholder="輸入股票代碼，例如 AAPL、TSLA、2330">
-    <p style="color: #94a3b8; font-size: 14px;">台股代碼將自動在新分頁開啟 TradingView 官網</p>
+    <p style="color: #94a3b8; font-size: 14px;">台股代碼會自動在新分頁開啟 TradingView 官網</p>
     <button onclick="updateChart()">更新圖表</button>
   </div>
 
@@ -105,15 +105,32 @@
 
 <script>
 function updateChart() {
-  let symbol = document.getElementById("symbolInput").value.trim();
+  const symbol = document.getElementById("symbolInput").value.trim();
 
-  // 判斷是否為純數字（台股代碼） → 開新頁面跳轉到 TradingView
   if (/^[0-9]{4}$/.test(symbol)) {
-    window.open(`https://tw.tradingview.com/symbols/TWSE-${symbol}/`, "_blank");
+    // 送出請求問後端上市或上櫃
+    fetch(`/api/market_type?ticker=${symbol}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data.success) {
+          alert("查詢市場別失敗：" + data.message);
+          return;
+        }
+
+        const market = data.market; // TSE 或 OTC
+        const tvMarket = market === "TSE" ? "TWSE" : "TPEX";
+
+        window.open(`https://tw.tradingview.com/symbols/${tvMarket}-${symbol}/`, "_blank");
+      })
+      .catch(err => {
+        console.error("⚠️ 市場別查詢錯誤", err);
+        alert("⚠️ 無法判斷股票市場別");
+      });
+
     return;
   }
 
-  // 其餘美股或加密幣 → 用 iframe 顯示
+  // 其他（美股 / 幣圈）用 iframe
   const container = document.getElementById("iframe-container");
   container.innerHTML = `
     <iframe
@@ -126,14 +143,14 @@ function updateChart() {
     </iframe>`;
 }
 
-// 預設載入 AAPL
+
+// 預設載入 AAPL 圖表
 window.onload = function () {
   document.getElementById("symbolInput").value = "AAPL";
   updateChart();
 };
+
 </script>
-
-
 
 
 
