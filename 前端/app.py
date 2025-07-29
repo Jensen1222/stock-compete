@@ -13,9 +13,19 @@ import os
 from decimal import Decimal, ROUND_HALF_UP
 import pandas as pd
 from collections import defaultdict, deque
+from openai import OpenAI 
+from FinMind.data import DataLoader
+from datetime import timedelta
 
-# 載入 .env
+# 載入 .env 檔案
 load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+finmind_token = os.getenv("FINMIND_TOKEN")
+client = OpenAI(api_key=openai.api_key)
+
+# 初始化 FinMind 客戶端
+api = DataLoader()
+api.login_by_token(api_token=finmind_token)
 
 # 初始化 Flask 應用程式
 app = Flask(
@@ -496,28 +506,82 @@ def get_market_type():
     except Exception as e:
         return jsonify(success=False, message=f"查詢失敗：{str(e)}")
 
-
-@app.route("/ai", methods=["GET", "POST"])
-def home():
+#ai
+@app.route("/ai.html")
+def ai_page():
     return render_template("ai.html")
 
-@app.route("/ask", methods=["POST"])
-def ask():
-    data = request.get_json()
-    question = data.get('question', '')
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+finmind_token = os.getenv("FINMIND_TOKEN")
 
-    if not question:
-        return jsonify({'answer': '請輸入問題'}), 400
+# 初始化 FinMind 並取得公司列表一次（可快取）
+api = DataLoader()
+api.login_by_token(api_token=finmind_token)
+stock_info_df = api.taiwan_stock_info()
+
+def find_ticker_by_company_name(user_input: str):
+    for _, row in stock_info_df.iterrows():
+        if row["stock_name"] in user_input:
+            return row["stock_id"], row["stock_name"]
+    return None, None
+
+@app.route("/ask-ai", methods=["POST"])
+def ask_ai():
+    user_input = request.json.get("question", "").strip()
+    if not user_input:
+        return jsonify({"success": False, "message": "❗️請輸入問題"})
+
+    # 嘗試比對公司名稱 → 股票代碼
+    ticker, company_name = find_ticker_by_company_name(user_input)
+    stock_summary = ""
+
+    if ticker:
+        today = datetime.today()
+        start_date = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+
+        try:
+            df = api.taiwan_stock_daily(stock_id=ticker, start_date=start_date, end_date=end_date)
+
+            # 只保留有收盤價的資料（排除停牌）
+            df = df[df["close"].notna()]
+            df = df.sort_values("date")
+
+            if len(df) >= 2:
+                start_price = df.iloc[-2]["close"]
+                end_price = df.iloc[-1]["close"]
+                pct = ((end_price - start_price) / start_price) * 100
+                stock_summary = f"{company_name}（{ticker}）近兩個交易日股價從 {start_price:.2f} 元變動至 {end_price:.2f} 元，漲跌幅為 {pct:.2f}%。"
+            else:
+                stock_summary = f"查無足夠的 {company_name}（{ticker}）股價資料。"
+        except Exception as e:
+            stock_summary = f"⚠️ 無法取得股價資料：{str(e)}"
+
+    else:
+        stock_summary = "⚠️ 未能辨識輸入中的公司名稱。"
+
+    # 將提示送給 GPT
+    prompt = f"""{stock_summary}
+使用者問題：「{user_input}」
+請根據上述資料分析公司近期表現，提供具體投資建議。"""
 
     try:
-        response = openai.ChatCompletion.create(
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": question}]
+            messages=[
+                {"role": "system", "content": "你是一位專業的台股投資分析師，請根據資料做出清楚、有條理的回覆。"},
+                {"role": "user", "content": prompt}
+            ]
         )
-        answer = response['choices'][0]['message']['content'].strip()
-        return jsonify({'answer': answer})
+        answer = response.choices[0].message.content
+        return jsonify({"success": True, "answer": answer})
     except Exception as e:
-        return jsonify({'answer': f'AI 錯誤：{str(e)}'}), 500
+        return jsonify({"success": False, "message": f"❌ GPT 回覆失敗：{str(e)}"})
+
+
+
 
 if __name__ == "__main__":
     with app.app_context():

@@ -178,12 +178,16 @@ window.onload = function () {
   <button class="buy-btn" onclick="window.location.href='/trades'">查看交易紀錄</button>
 </div>
 
-  <div class="card">
-    <h2>ai投資問題</h2>
-    <p>相關投資問題。</p>
-    <button class="buy-btn" onclick="window.location.href='/ai'">ai投資問題</button>
-  </div>
+<div class="card">
+  <h2><strong>ai</strong> 投資問題</h2>
+  <hr style="border-color: var(--border-color);">
+  <p>相關投資問題。</p>
+  <a href="/ai.html">
+    <button class="buy-btn">ai投資問題</button>
+  </a>
 </div>
+
+
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script src="{{ url_for('static', filename='script.js') }}"></script>

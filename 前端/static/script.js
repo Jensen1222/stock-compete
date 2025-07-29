@@ -278,3 +278,4 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('buy-lot-btn')?.addEventListener('click', () => tradeLot('買入'));
   document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
 });
+
