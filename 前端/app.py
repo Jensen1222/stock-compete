@@ -19,9 +19,11 @@ from datetime import timedelta
 
 # 載入 .env 檔案
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
+api_key = os.getenv("OPENAI_API_KEY")
 finmind_token = os.getenv("FINMIND_TOKEN")
-client = OpenAI(api_key=openai.api_key)
+
+client = OpenAI(api_key=api_key)
 
 # 初始化 FinMind 客戶端
 api = DataLoader()
