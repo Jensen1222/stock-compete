@@ -15,7 +15,8 @@ import pandas as pd
 from collections import defaultdict, deque
 from openai import OpenAI 
 from FinMind.data import DataLoader
-from datetime import timedelta
+from flask import Response, stream_with_context
+from datetime import datetime, timedelta
 
 # 載入 .env 檔案
 load_dotenv()
@@ -528,59 +529,86 @@ def find_ticker_by_company_name(user_input: str):
             return row["stock_id"], row["stock_name"]
     return None, None
 
+from flask import request, Response, stream_with_context
+from datetime import datetime, timedelta
+import openai
+
 @app.route("/ask-ai", methods=["POST"])
 def ask_ai():
-    user_input = request.json.get("question", "").strip()
+    data = request.json
+    user_input = data.get("question", "").strip()
+    mode = data.get("type", "analysis")  # "future" or "analysis"
+
     if not user_input:
-        return jsonify({"success": False, "message": "❗️請輸入問題"})
+        return Response("❗️請輸入問題", mimetype='text/plain')
 
-    # 嘗試比對公司名稱 → 股票代碼
-    ticker, company_name = find_ticker_by_company_name(user_input)
-    stock_summary = ""
+    def generate():
+        yield "💬 回答：\n\n"
 
-    if ticker:
-        today = datetime.today()
-        start_date = (today - timedelta(days=14)).strftime("%Y-%m-%d")
-        end_date = today.strftime("%Y-%m-%d")
+        prompt = ""
+        model = "gpt-4"
+
+        if mode == "analysis":
+            # =====  具體分析模式：找股票代號 + FinMind 股價資料 =====
+            ticker, company_name = find_ticker_by_company_name(user_input)
+            system_role = "你是一位專業的台股投資分析師，請給出專業且實用的建議。"
+
+            if ticker:
+                try:
+                    today = datetime.today()
+                    start_date = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+                    end_date = today.strftime("%Y-%m-%d")
+                    df = api.taiwan_stock_daily(stock_id=ticker, start_date=start_date, end_date=end_date)
+                    df = df[df["close"].notna()].sort_values("date")
+
+                    if len(df) >= 2:
+                        start_price = df.iloc[-2]["close"]
+                        end_price = df.iloc[-1]["close"]
+                        pct = ((end_price - start_price) / start_price) * 100
+                        stock_summary = f"資料摘要：{company_name}（{ticker}）近兩個交易日股價從 {start_price:.2f} 元變動至 {end_price:.2f} 元，漲跌幅為 {pct:.2f}%。"
+                    else:
+                        stock_summary = f"⚠️ 查無足夠的 {company_name}（{ticker}）股價資料。"
+                except Exception as e:
+                    stock_summary = f"⚠️ 無法取得股價資料：{str(e)}"
+            else:
+                stock_summary = "⚠️ 無法辨識公司名稱或股票代碼。"
+
+            yield stock_summary + "\n\n"
+
+            prompt = f"""{stock_summary}
+使用者問題：「{user_input}」
+請根據上述資料分析該公司近期表現，提供具體投資建議。"""
+
+        else:
+            # ===== 未來展望模式：不抓資料、直接分析產業趨勢 =====
+            model = "gpt-4"
+            system_role = "你是一位專業的台灣股票顧問，擅長分析產業趨勢與企業長期發展潛力，請用長期視角給出建議。"
+
+            prompt = f"""使用者問題：「{user_input}」
+請以長期（3～5 年）投資視角，根據該公司所處產業的未來趨勢、全球環境、技術創新與競爭力，提供完整、清晰的展望與策略建議。"""
 
         try:
-            df = api.taiwan_stock_daily(stock_id=ticker, start_date=start_date, end_date=end_date)
+            client = openai.OpenAI()
+            stream = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_role},
+                    {"role": "user", "content": prompt}
+                ],
+                stream=True
+            )
 
-            # 只保留有收盤價的資料（排除停牌）
-            df = df[df["close"].notna()]
-            df = df.sort_values("date")
+            for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
 
-            if len(df) >= 2:
-                start_price = df.iloc[-2]["close"]
-                end_price = df.iloc[-1]["close"]
-                pct = ((end_price - start_price) / start_price) * 100
-                stock_summary = f"{company_name}（{ticker}）近兩個交易日股價從 {start_price:.2f} 元變動至 {end_price:.2f} 元，漲跌幅為 {pct:.2f}%。"
-            else:
-                stock_summary = f"查無足夠的 {company_name}（{ticker}）股價資料。"
         except Exception as e:
-            stock_summary = f"⚠️ 無法取得股價資料：{str(e)}"
+            yield f"\n❌ GPT 回覆失敗：{str(e)}"
 
-    else:
-        stock_summary = "⚠️ 未能辨識輸入中的公司名稱。"
+    return Response(stream_with_context(generate()), mimetype="text/plain")
 
-    # 將提示送給 GPT
-    prompt = f"""{stock_summary}
-使用者問題：「{user_input}」
-請根據上述資料分析公司近期表現，提供具體投資建議。"""
 
-    try:
-        client = openai.OpenAI()
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "你是一位專業的台股投資分析師，請根據資料做出清楚、有條理的回覆。"},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        answer = response.choices[0].message.content
-        return jsonify({"success": True, "answer": answer})
-    except Exception as e:
-        return jsonify({"success": False, "message": f"❌ GPT 回覆失敗：{str(e)}"})
 
 
 

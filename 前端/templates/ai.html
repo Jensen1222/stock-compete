@@ -39,11 +39,13 @@
     }
 
     .button-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 20px;
-    }
+     display: flex;
+     justify-content: center;
+     gap: 20px;
+     margin-top: 20px;
+     flex-wrap: wrap;
+   }
+
 
     #answer {
       margin-top: 25px;
@@ -56,7 +58,23 @@
       color: var(--text-primary);
     }
 
-    /* ✅ 使用排行榜相同帳號顯示區樣式 */
+    .loader {
+      border: 4px solid #eee;
+      border-top: 4px solid #38bdf8;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
     .account-info {
       position: fixed;
       top: 10px;
@@ -103,7 +121,8 @@
     <textarea id="question" placeholder="請輸入問題..."></textarea>
 
     <div class="button-row">
-      <button class="buy-btn" onclick="askAI()">送出問題</button>
+      <button class="buy-btn" onclick="askAI('future')">未來展望</button>
+      <button class="buy-btn" onclick="askAI('analysis')">具體分析</button>
       <a href="{{ url_for('index') }}" class="btn">返回首頁</a>
     </div>
 
@@ -111,33 +130,71 @@
   </div>
 
   <script>
-    function askAI() {
-      const q = document.getElementById("question").value.trim();
-      const answerDiv = document.getElementById("answer");
-      if (!q) {
-        answerDiv.innerHTML = "⚠️ 請輸入問題";
-        return;
+  function askAI(mode) {
+    const q = document.getElementById("question").value.trim();
+    const answerDiv = document.getElementById("answer");
+    const futureBtn = document.querySelector("button[onclick*='future']");
+    const analysisBtn = document.querySelector("button[onclick*='analysis']");
+    const buttons = [futureBtn, analysisBtn];
+
+    if (!q) {
+      answerDiv.innerHTML = "⚠️ 請輸入問題";
+      return;
+    }
+
+    // 儲存原始按鈕文字
+    const futureText = futureBtn.innerHTML;
+    const analysisText = analysisBtn.innerHTML;
+
+    // 顯示 loading 動畫 + 禁用按鈕
+    buttons.forEach(btn => {
+      btn.disabled = true;
+      btn.innerHTML = "⏳ 載入中...";
+    });
+    answerDiv.innerHTML = "<div class='loader'></div> ⏳ 分析中...";
+
+    fetch("/ask-ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, type: mode })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error("伺服器錯誤");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let text = "";
+      answerDiv.innerHTML = ""; // 清除 loading 動畫
+
+      function readChunk() {
+        return reader.read().then(({ done, value }) => {
+          if (done) {
+            // 回復按鈕狀態
+            futureBtn.disabled = false;
+            analysisBtn.disabled = false;
+            futureBtn.innerHTML = futureText;
+            analysisBtn.innerHTML = analysisText;
+            return;
+          }
+          const chunk = decoder.decode(value, { stream: true });
+          text += chunk;
+          answerDiv.innerText = text;
+          return readChunk();
+        });
       }
 
-      answerDiv.innerHTML = "⏳ 分析中，請稍候...";
+      return readChunk();
+    })
+    .catch(err => {
+      answerDiv.innerText = "❌ 發生錯誤：" + err;
+      // 回復按鈕狀態（即使失敗）
+      futureBtn.disabled = false;
+      analysisBtn.disabled = false;
+      futureBtn.innerHTML = futureText;
+      analysisBtn.innerHTML = analysisText;
+    });
+  }
+</script>
 
-      fetch("/ask-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q })
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          answerDiv.innerHTML = "💬 回答：\n" + data.answer;
-        } else {
-          answerDiv.innerHTML = "❌ 錯誤：" + data.message;
-        }
-      })
-      .catch(err => {
-        answerDiv.innerHTML = "❌ 發生錯誤：" + err;
-      });
-    }
-  </script>
 </body>
 </html>
