@@ -523,34 +523,45 @@ api = DataLoader()
 api.login_by_token(api_token=finmind_token)
 stock_info_df = api.taiwan_stock_info()
 
+# 根據輸入找出股票代號與公司名稱
 def find_ticker_by_company_name(user_input: str):
     for _, row in stock_info_df.iterrows():
-        if row["stock_name"] in user_input:
+        if row["stock_name"] in user_input or row["stock_id"] in user_input:
             return row["stock_id"], row["stock_name"]
     return None, None
 
-from flask import request, Response, stream_with_context
-from datetime import datetime, timedelta
-import openai
+# 初始化 FinMind 並取得公司列表一次（可快取）
+api = DataLoader()
+api.login_by_token(api_token=finmind_token)
+stock_info_df = api.taiwan_stock_info()
+
+# 根據輸入找出股票代號與公司名稱
+def find_ticker_by_company_name(user_input: str):
+    for _, row in stock_info_df.iterrows():
+        if row["stock_name"] in user_input or row["stock_id"] in user_input:
+            return row["stock_id"], row["stock_name"]
+    return None, None
 
 @app.route("/ask-ai", methods=["POST"])
 def ask_ai():
     data = request.json
     user_input = data.get("question", "").strip()
-    mode = data.get("type", "analysis")  # "future" or "analysis"
+    mode = data.get("type", "analysis")
 
     if not user_input:
         return Response("❗️請輸入問題", mimetype='text/plain')
 
-    def generate():
+    def generate(user_input, mode):
         yield "💬 回答：\n\n"
 
-        prompt = ""
         model = "gpt-4"
+        prompt = ""
+        system_role = ""
+
+        # 嘗試找公司資訊
+        ticker, company_name = find_ticker_by_company_name(user_input)
 
         if mode == "analysis":
-            # =====  具體分析模式：找股票代號 + FinMind 股價資料 =====
-            ticker, company_name = find_ticker_by_company_name(user_input)
             system_role = "你是一位專業的台股投資分析師，請給出專業且實用的建議。"
 
             if ticker:
@@ -579,12 +590,16 @@ def ask_ai():
 使用者問題：「{user_input}」
 請根據上述資料分析該公司近期表現，提供具體投資建議。"""
 
-        else:
-            # ===== 未來展望模式：不抓資料、直接分析產業趨勢 =====
-            model = "gpt-4"
+        else:  # mode == future
             system_role = "你是一位專業的台灣股票顧問，擅長分析產業趨勢與企業長期發展潛力，請用長期視角給出建議。"
 
-            prompt = f"""使用者問題：「{user_input}」
+            if ticker:
+                company_intro = f"公司名稱：{company_name}（{ticker}）\n"
+                user_input = f"{company_name}（{ticker}）的未來發展"
+            else:
+                company_intro = ""
+
+            prompt = f"""{company_intro}使用者問題：「{user_input}」
 請以長期（3～5 年）投資視角，根據該公司所處產業的未來趨勢、全球環境、技術創新與競爭力，提供完整、清晰的展望與策略建議。"""
 
         try:
@@ -606,10 +621,7 @@ def ask_ai():
         except Exception as e:
             yield f"\n❌ GPT 回覆失敗：{str(e)}"
 
-    return Response(stream_with_context(generate()), mimetype="text/plain")
-
-
-
+    return Response(stream_with_context(generate(user_input, mode)), mimetype="text/plain")
 
 
 
