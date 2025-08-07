@@ -333,58 +333,83 @@ def api_portfolio():
 
     return jsonify(result)
 
+@app.route("/update-total-assets", methods=["POST"])
+@login_required
+def update_total_assets():
+    data = request.get_json()
+    total_assets = data.get("totalAssets")
+
+    if total_assets is None:
+        return jsonify(success=False, message="缺少總資產")
+
+    user = User.query.get(current_user.id)
+    user.total_assets = total_assets
+    db.session.commit()
+
+    return jsonify(success=True)
 
 
-# Ranking
 @app.route("/ranking")
 @login_required
 def ranking():
+    import requests
+    import yfinance as yf
+
+    def get_stock_price(ticker):
+        # 1. 嘗試從 TWSE 抓即時價
+        try:
+            url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw"
+            res = requests.get(url)
+            data = res.json()
+            msg_array = data.get("msgArray", [])
+            if msg_array:
+                z = msg_array[0].get("z")
+                if z and z != "-":
+                    return float(z)
+        except Exception as e:
+            print(f"⚠️ TWSE 抓 {ticker} 價格失敗：{e}")
+
+        # 2. 改用 Yahoo 抓過去5天資料，自動找最近一筆收盤價
+        for suffix in [".TWO", ".TW"]:
+            try:
+                stock = yf.Ticker(ticker + suffix)
+                hist = stock.history(period="5d")
+                if not hist.empty:
+                    close_prices = hist["Close"].dropna()
+                    if not close_prices.empty:
+                        return float(close_prices.iloc[-1])
+            except Exception as e:
+                print(f"⚠️ Yahoo 抓 {ticker + suffix} 失敗：{e}")
+
+        print(f"❌ {ticker} 完全抓不到價格（TWSE & Yahoo）")
+        return 0
+
     users = User.query.all()
     ranking_data = []
 
-    def get_live_price(ticker):
-        try:
-            for market in ['tse', 'otc']:
-                url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{ticker}.tw"
-                res = requests.get(url)
-                data = res.json()
-                msg_array = data.get("msgArray", [])
-                if msg_array and "z" in msg_array[0] and msg_array[0]["z"] != "-":
-                    return float(msg_array[0]["z"])
-        except:
-            pass
-        return None
-
     for user in users:
+        cash = user.balance
         trades = Trade.query.filter_by(user_id=user.id).all()
-        balance = app.config["INITIAL_BALANCE"]
-        portfolio = {}
-        for t in trades:
-            qty = t.quantity
-            cost = qty * t.price
-            if t.trade_type == "買入":
-                balance -= cost
-                if t.ticker not in portfolio:
-                    portfolio[t.ticker] = {"qty": 0}
-                portfolio[t.ticker]["qty"] += qty
-            elif t.trade_type == "賣出":
-                balance += cost
-                if t.ticker in portfolio:
-                    portfolio[t.ticker]["qty"] -= qty
-        total_value = balance
-        for t, pos in portfolio.items():
-            if pos["qty"] > 0:
-                live_price = get_live_price(t)
-                if live_price:
-                    total_value += pos["qty"] * live_price
-        ranking_data.append({
-            "username": user.username,
-            "total_value": round(total_value, 2)
-        })
+        holdings = {}
 
-    # ⚠️ 確保最後這一行一定要有：
-    ranking_data.sort(key=lambda x: x["total_value"], reverse=True)
+        for trade in trades:
+            qty = trade.quantity if trade.trade_type in ["買入", "buy"] else -trade.quantity
+            holdings[trade.ticker] = holdings.get(trade.ticker, 0) + qty
+
+        total_stock_value = 0
+        for ticker, qty in holdings.items():
+            if qty > 0:
+                price = get_stock_price(ticker)
+                total_stock_value += price * qty
+                print(f"🧾 {user.username} 持有 {ticker}: 數量 {qty}，價格 {price}，小計 {price * qty}")
+
+        total_asset = round(cash + total_stock_value, 2)
+        print(f"🧮 {user.username} 總資產 = 現金 {cash} + 股票 {total_stock_value} = {total_asset}")
+        ranking_data.append((user.username, total_asset))
+
+    ranking_data.sort(key=lambda x: x[1], reverse=True)
     return render_template("ranking.html", ranking_data=ranking_data)
+
 
 
 # Quiz with database save

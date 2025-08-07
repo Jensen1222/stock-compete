@@ -12,7 +12,6 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(200), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     balance = db.Column(db.Float, default=10000000, nullable=False)  # 💰 初始資金一千萬
-
     # 關聯交易紀錄與測驗結果
     trades = db.relationship('Trade', backref='user', lazy=True)
     results = db.relationship('Result', backref='user', lazy=True)

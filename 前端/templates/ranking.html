@@ -56,21 +56,22 @@
     <table class="ranking-table">
       <thead>
         <tr>
-          <th>名次</th>
-          <th>用戶名稱</th>
-          <th>總資產（含現金與持股）</th>
+          <th>排名</th>
+          <th>使用者</th>
+          <th>總資產</th>
         </tr>
       </thead>
       <tbody>
-        {% for user in ranking_data %}
+        {% for username, data in ranking_data %}
           <tr>
             <td>{{ loop.index }}</td>
-            <td>{{ user.username }}</td>
-            <td>${{ "{:,.2f}".format(user.total_value) }}</td>
+            <td>{{ username }}</td>
+            <td>${{ "{:,.2f}".format(data) }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+
     <div style="text-align: center;">
       <a href="/" class="back-btn">返回首頁</a>
     </div>
