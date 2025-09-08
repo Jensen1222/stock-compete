@@ -19,23 +19,35 @@
   <h1>虛擬股票投資系統</h1>
 
   <div class="card">
-    <h2>📝 投資個性問卷</h2>
+    <h2>投資個性問卷</h2>
     <p>完成簡單五題問卷，了解你的投資風格並獲得建議。</p>
     <button class="buy-btn" onclick="window.open('/quiz', '_blank')">開始問卷測驗</button>
   </div>
 
   <div class="card">
-    <h2>📊 排行榜</h2>
+    <h2>排行榜</h2>
     <p>查看所有使用者的總資產排行。</p>
     <button class="buy-btn" onclick="window.location.href='/ranking'">查看排行榜</button>
   </div>
 
-  <div class="card balance-card">
-    <div>
-      <h2>目前餘額：<span id="balance">$0.00</span></h2>
-      <h2 style="margin-top: 10px;">總資產：<span id="total-assets">$0.00</span></h2>
+<div class="card balance-card">
+  <div>
+    <h2>目前餘額：<span id="balance">$0.00</span></h2>
+    <h2 style="margin-top: 10px;">總資產：<span id="total-assets">$0.00</span></h2>
+  </div>
+
+  <!-- 排名徽章放這裡 -->
+  <div class="rank-badge">
+    <div class="rank-title">目前排名</div>
+    <div class="rank-main">
+      <span id="user-rank">--</span>
+      <span class="rank-suffix"> / <span id="user-count">--</span></span>
     </div>
   </div>
+</div>
+
+
+
 
   <!-- 整股交易區 -->
   <div class="card">

@@ -316,99 +316,50 @@ button {
   min-width: 180px;         /* 可選，加強對齊感 */
 }
 
-/* === 手機/小螢幕修復：單欄 + 可捲動 + 不撐爆 === */
+/* === 通用：不撐爆、不出現水平卷軸 === */
 *,
 *::before,
 *::after { box-sizing: border-box; }
 
-html, body {
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  overflow-x: hidden;
-}
+html, body { width: 100%; margin: 0; padding: 0; overflow-x: hidden; }
 
-/* 重要：Grid 子項在小螢幕可收縮，避免被內容撐爆 */
+/* Grid 子項可收縮 */
 .container > * { min-width: 0; }
 
-/* 表格在小螢幕可橫向捲動，避免卡版面 */
+/* 表格可橫向捲動 */
 .table-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table { width: 100%; border-collapse: collapse; }
 
 /* 圖片/Canvas 不超出容器 */
 img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
 
-/* 小於 1024px → 改為單欄流動排版 */
-@media (max-width: 1024px) {
-  .container {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "header"
-      "balance"
-      "actions"
-      "chart"
-      "tradingview"
-      "portfolio"
-      "log";
-    gap: 16px;
-    padding: 0 12px; /* 讓左右不會貼邊 */
-  }
-
-  /* 卡片內距略縮，避免顯示擁擠 */
-  .card { padding: 20px; }
-
-  /* 結餘卡在手機上下堆疊，不要左右擠壓 */
-  .balance-card {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  /* 表格字距更緊湊 */
-  th, td { padding: 6px 8px; }
-}
-
-/* 超小螢幕再縮一點 */
-@media (max-width: 480px) {
-  h1 { font-size: 2rem; }
-  .card h2 { font-size: 1.2rem; }
-  .login-container { margin: 60px 12px; padding: 20px; }
-
-  /* 原本 min-width 180px 會把表格撐寬，手機降到 120px */
-  .profit-cell { min-width: 120px; }
-}
-
-/* === 響應式補丁：不改既有視覺，只處理版面 === */
-*,
-*::before,
-*::after { box-sizing: border-box; }
-
-html, body {
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  overflow-x: hidden;
-}
-
-/* Grid 子項可收縮，避免被內容撐爆 */
-.container > * { min-width: 0; }
-
-/* 表格在小螢幕可橫向捲動 */
-.table-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-
-/* Chart 容器用高度控制，Chart.js 配合 maintainAspectRatio:false */
+/* Chart 容器高度；Chart.js 要搭配 maintainAspectRatio:false */
 .chart-box { position: relative; width: 100%; height: 280px; }
 @media (min-width: 768px){ .chart-box { height: 360px; } }
 @media (min-width: 1200px){ .chart-box { height: 420px; } }
 
-/* TradingView iframe 高度用 CSS 控制 */
+/* TradingView iframe 高度 */
 .tv-box iframe { width: 100%; height: 420px; border: 0; }
 @media (max-width: 480px){ .tv-box iframe { height: 320px; } }
 
-/* 手機：單欄排版，避免「寬度被限制」 */
-@media (max-width: 1024px) {
-  .container {
-    grid-template-columns: 1fr;
+/* 排名徽章（桌機/平板） */
+.rank-badge{
+  background: linear-gradient(135deg, #3b82f6, #10b981);
+  color:#fff;
+  padding:16px 20px;
+  border-radius:12px;
+  box-shadow:0 6px 16px rgba(0,0,0,.25);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-width:140px;
+}
+.rank-title{ font-size:.9rem; margin-bottom:6px; opacity:.9; letter-spacing:1px; }
+.rank-main{ font-weight:800; font-size:1.8rem; line-height:1; }
+.rank-suffix{ font-size:1rem; margin-left:4px; opacity:.9; }
+
+/* ====== 手機（≤1024px）：單欄、內距縮、徽章靠左 ====== */
+@media (max-width: 1024px){
+  .container{
+    grid-template-columns:1fr;
     grid-template-areas:
       "header"
       "balance"
@@ -417,19 +368,24 @@ html, body {
       "tradingview"
       "portfolio"
       "log";
-    gap: 16px;
-    padding: 0 12px;
+    gap:16px; padding:0 12px;
   }
-  .card { padding: 20px; }
-  .balance-card { flex-direction: column; align-items: flex-start; gap: 12px; }
-  th, td { padding: 6px 8px; }
+  .card{ padding:20px; }
+  .balance-card{ flex-direction:column; align-items:stretch; gap:12px; }
+
+  /* 排名徽章靠左，寬度依內容 */
+  .rank-badge{ align-self:flex-start; min-width:unset; width:max-content; max-width:100%; padding:14px 16px; }
+
+  th, td{ padding:6px 8px; }
 }
 
-/* 超小螢幕：字級與寬度微縮 */
-@media (max-width: 480px) {
-  h1 { font-size: 2rem; }
-  .card h2 { font-size: 1.2rem; }
-  .login-container { margin: 60px 12px; padding: 20px; }
-  .profit-cell { min-width: 120px; } /* 你原本 180px 會撐表格，手機降一點 */
+/* ====== 超小機種（≤480px）：字級再縮 ====== */
+@media (max-width: 480px){
+  h1{ font-size:2rem; }
+  .card h2{ font-size:1.2rem; }
+  .login-container{ margin:60px 12px; padding:20px; }
+  .profit-cell{ min-width:120px; }   /* 原本會撐寬，手機降一點 */
+  .rank-main{ font-size:1.5rem; }
+  .rank-suffix{ font-size:.95rem; }
 }
 

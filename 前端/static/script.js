@@ -279,3 +279,21 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
 });
 
+function loadUserRank() {
+  fetch('/api/user-rank')
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        document.getElementById('user-rank').textContent = data.rank ?? '--';
+        document.getElementById('user-count').textContent = data.total ?? '--';
+      }
+    })
+    .catch(err => console.error('載入排名失敗', err));
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadPortfolio();
+  loadUserRank(); // ← 加這行
+  document.getElementById('buy-lot-btn')?.addEventListener('click', () => tradeLot('買入'));
+  document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
+});

@@ -349,17 +349,19 @@ def update_total_assets():
     return jsonify(success=True)
 
 
-@app.route("/ranking")
-@login_required
-def ranking():
+def build_ranking_data():
+    """
+    回傳已排序的 [(username, total_asset), ...]（高→低）。
+    直接沿用你 /ranking 內的計算邏輯。
+    """
     import requests
     import yfinance as yf
 
     def get_stock_price(ticker):
-        # 1. 嘗試從 TWSE 抓即時價
+        # 1) 先試 TWSE
         try:
             url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{ticker}.tw"
-            res = requests.get(url)
+            res = requests.get(url, timeout=3)
             data = res.json()
             msg_array = data.get("msgArray", [])
             if msg_array:
@@ -369,7 +371,7 @@ def ranking():
         except Exception as e:
             print(f"⚠️ TWSE 抓 {ticker} 價格失敗：{e}")
 
-        # 2. 改用 Yahoo 抓過去5天資料，自動找最近一筆收盤價
+        # 2) 改用 Yahoo (TW / TWO)
         for suffix in [".TWO", ".TW"]:
             try:
                 stock = yf.Ticker(ticker + suffix)
@@ -381,8 +383,8 @@ def ranking():
             except Exception as e:
                 print(f"⚠️ Yahoo 抓 {ticker + suffix} 失敗：{e}")
 
-        print(f"❌ {ticker} 完全抓不到價格（TWSE & Yahoo）")
-        return 0
+        print(f"❌ {ticker} 完全抓不到價格")
+        return 0.0
 
     users = User.query.all()
     ranking_data = []
@@ -390,25 +392,43 @@ def ranking():
     for user in users:
         cash = user.balance
         trades = Trade.query.filter_by(user_id=user.id).all()
-        holdings = {}
 
+        holdings = {}
         for trade in trades:
             qty = trade.quantity if trade.trade_type in ["買入", "buy"] else -trade.quantity
             holdings[trade.ticker] = holdings.get(trade.ticker, 0) + qty
 
-        total_stock_value = 0
+        total_stock_value = 0.0
         for ticker, qty in holdings.items():
             if qty > 0:
                 price = get_stock_price(ticker)
                 total_stock_value += price * qty
-                print(f"🧾 {user.username} 持有 {ticker}: 數量 {qty}，價格 {price}，小計 {price * qty}")
 
         total_asset = round(cash + total_stock_value, 2)
-        print(f"🧮 {user.username} 總資產 = 現金 {cash} + 股票 {total_stock_value} = {total_asset}")
         ranking_data.append((user.username, total_asset))
 
     ranking_data.sort(key=lambda x: x[1], reverse=True)
+    return ranking_data
+
+# ✅ 保持你原有的 /ranking（改成呼叫共用函式）
+@app.route("/ranking")
+@login_required
+def ranking():
+    ranking_data = build_ranking_data()
     return render_template("ranking.html", ranking_data=ranking_data)
+
+# ✅ 新增：首頁拿「目前使用者名次 / 總人數」的 API
+@app.route("/api/user-rank")
+@login_required
+def api_user_rank():
+    ranking_data = build_ranking_data()
+    total = len(ranking_data)
+    rank = next((i + 1 for i, (uname, _) in enumerate(ranking_data)
+                 if uname == current_user.username), None)
+    my_assets = next((assets for uname, assets in ranking_data
+                      if uname == current_user.username), None)
+    return jsonify(success=True, rank=rank, total=total, assets=my_assets)
+
 
 
 
