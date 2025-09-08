@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>虛擬股票投資系統</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -37,45 +37,42 @@
     </div>
   </div>
 
-<!-- 整股交易區 -->
-<div class="card">
-  <h2>整股交易區</h2>
-  <div class="input-group">
-    <label for="ticker">股票代號：</label>
-    <input type="text" id="ticker" placeholder="例如：2330" required>
-  </div>
-  <div class="input-group">
-    <label for="quantity">數量（張）：</label>
-    <input type="number" id="quantity" placeholder="例如：10" required>
-  </div>
-  <div class="input-group">
-    <button class="buy-btn" onclick="buyStock()">買入</button>
-    <button class="sell-btn" onclick="sellStock()">賣出</button>
-  </div>
-</div>
-
-<!-- 零股交易區 -->
-<div class="card">
-  <h2>零股交易區</h2>
-  <div class="input-group">
-    <label for="ticker-lot">股票代號：</label>
-    <input type="text" id="ticker-lot" placeholder="例如：2330" required>
-  </div>
-  <div class="input-group">
-    <label for="quantity-lot">股數（1～999）：</label>
-    <input type="number" id="quantity-lot" min="1" max="999" placeholder="例如：30" required>
-  </div>
-  <div class="input-group">
-    <button id="buy-lot-btn" type="button" class="buy-btn">買入零股</button>
-    <button id="sell-lot-btn" type="button" class="sell-btn">賣出零股</button>
-  </div>
-</div>
-
-
-
-
-  <!-- ✅ 整合後的「股票查詢與趨勢圖」 -->
+  <!-- 整股交易區 -->
   <div class="card">
+    <h2>整股交易區</h2>
+    <div class="input-group">
+      <label for="ticker">股票代號：</label>
+      <input type="text" id="ticker" placeholder="例如：2330" required>
+    </div>
+    <div class="input-group">
+      <label for="quantity">數量（張）：</label>
+      <input type="number" id="quantity" placeholder="例如：10" required>
+    </div>
+    <div class="input-group">
+      <button class="buy-btn" onclick="buyStock()">買入</button>
+      <button class="sell-btn" onclick="sellStock()">賣出</button>
+    </div>
+  </div>
+
+  <!-- 零股交易區 -->
+  <div class="card">
+    <h2>零股交易區</h2>
+    <div class="input-group">
+      <label for="ticker-lot">股票代號：</label>
+      <input type="text" id="ticker-lot" placeholder="例如：2330" required>
+    </div>
+    <div class="input-group">
+      <label for="quantity-lot">股數（1～999）：</label>
+      <input type="number" id="quantity-lot" min="1" max="999" placeholder="例如：30" required>
+    </div>
+    <div class="input-group">
+      <button id="buy-lot-btn" type="button" class="buy-btn">買入零股</button>
+      <button id="sell-lot-btn" type="button" class="sell-btn">賣出零股</button>
+    </div>
+  </div>
+
+  <!-- ✅ 股票查詢與趨勢圖 -->
+  <div class="card chart-card"> <!-- ADD: chart-card -->
     <h2>📈 股票查詢與趨勢圖</h2>
 
     <div class="input-group">
@@ -88,187 +85,167 @@
     </div>
 
     <p id="currentPrice" style="margin-top: 10px;"></p>
-    <canvas id="chart" width="400" height="200"></canvas>
+
+    <!-- ADD: 用外層控制高度，canvas 不寫 width/height -->
+    <div class="chart-box"> <!-- ADD -->
+      <canvas id="chart"></canvas> <!-- MOD: 移除 width/height 屬性 -->
+    </div>
   </div>
 
-<div class="card">
-  <h2>📈 TradingView 即時圖表</h2>
+  <div class="card tradingview-card"> <!-- ADD: tradingview-card -->
+    <h2>📈 TradingView 即時圖表</h2>
 
-  <div style="margin-bottom: 10px;">
-    <input type="text" id="symbolInput" placeholder="輸入股票代碼，例如 AAPL、TSLA、2330">
-    <p style="color: #94a3b8; font-size: 14px;">台股代碼會自動在新分頁開啟 TradingView 官網</p>
-    <button onclick="updateChart()">更新圖表</button>
+    <div style="margin-bottom: 10px;">
+      <input type="text" id="symbolInput" placeholder="輸入股票代碼，例如 AAPL、TSLA、2330">
+      <p style="color: #94a3b8; font-size: 14px;">台股代碼會自動在新分頁開啟 TradingView 官網</p>
+      <button onclick="updateChart()">更新圖表</button>
+    </div>
+
+    <!-- ADD: 統一用 CSS 控制 iframe 尺寸 -->
+    <div id="iframe-container" class="tv-box"></div> <!-- ADD class -->
   </div>
 
-  <div id="iframe-container"></div>
-</div>
+  <script>
+  function updateChart() {
+    const symbol = document.getElementById("symbolInput").value.trim();
 
-<script>
-function updateChart() {
-  const symbol = document.getElementById("symbolInput").value.trim();
+    if (/^[0-9]{4}$/.test(symbol)) {
+      fetch(`/api/market_type?ticker=${symbol}`)
+        .then(res => res.json())
+        .then(data => {
+          if (!data.success) {
+            alert("查詢市場別失敗：" + data.message);
+            return;
+          }
+          const market = data.market; // TSE 或 OTC
+          const tvMarket = market === "TSE" ? "TWSE" : "TPEX";
+          window.open(`https://tw.tradingview.com/symbols/${tvMarket}-${symbol}/`, "_blank");
+        })
+        .catch(err => {
+          console.error("⚠️ 市場別查詢錯誤", err);
+          alert("⚠️ 無法判斷股票市場別");
+        });
+      return;
+    }
 
-  if (/^[0-9]{4}$/.test(symbol)) {
-    // 送出請求問後端上市或上櫃
-    fetch(`/api/market_type?ticker=${symbol}`)
-      .then(res => res.json())
-      .then(data => {
-        if (!data.success) {
-          alert("查詢市場別失敗：" + data.message);
-          return;
-        }
-
-        const market = data.market; // TSE 或 OTC
-        const tvMarket = market === "TSE" ? "TWSE" : "TPEX";
-
-        window.open(`https://tw.tradingview.com/symbols/${tvMarket}-${symbol}/`, "_blank");
-      })
-      .catch(err => {
-        console.error("⚠️ 市場別查詢錯誤", err);
-        alert("⚠️ 無法判斷股票市場別");
-      });
-
-    return;
+    // 其他（美股 / 幣圈）用 iframe
+    const container = document.getElementById("iframe-container");
+    container.innerHTML = `
+      <iframe
+        src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=D&theme=dark&style=1&locale=zh_TW"
+        allowtransparency="true" frameborder="0" scrolling="no"></iframe>`; <!-- MOD: 移除 width/height -->
   }
 
-  // 其他（美股 / 幣圈）用 iframe
-  const container = document.getElementById("iframe-container");
-  container.innerHTML = `
-    <iframe
-      src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=D&theme=dark&style=1&locale=zh_TW"
-      width="100%"
-      height="500"
-      frameborder="0"
-      allowtransparency="true"
-      scrolling="no">
-    </iframe>`;
-}
+  // 預設載入 AAPL 圖表
+  window.onload = function () {
+    document.getElementById("symbolInput").value = "AAPL";
+    updateChart();
+  };
+  </script>
 
-
-// 預設載入 AAPL 圖表
-window.onload = function () {
-  document.getElementById("symbolInput").value = "AAPL";
-  updateChart();
-};
-
-</script>
-
-
-
-
-  <div class="card">
+  <div class="card portfolio-card"> <!-- ADD: portfolio-card -->
     <h2>投資組合</h2>
-    <table id="portfolio-table">
-      <thead>
-      <tr>
-    <th>代碼</th>
-    <th>數量</th>
-    <th>成本價</th>
-    <th>市價</th>
-    <th>市值</th>
-    <th>損益</th> 
-     </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="table-wrapper"> <!-- ADD: 包起來可橫向捲動 -->
+      <table id="portfolio-table">
+        <thead>
+          <tr>
+            <th>代碼</th>
+            <th>數量</th>
+            <th>成本價</th>
+            <th>市價</th>
+            <th>市值</th>
+            <th>損益</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
-  <h2>交易紀錄</h2>
-  <p>查看你所有買入和賣出的紀錄</p>
-  <button class="buy-btn" onclick="window.location.href='/trades'">查看交易紀錄</button>
-</div>
+    <h2>交易紀錄</h2>
+    <p>查看你所有買入和賣出的紀錄</p>
+    <button class="buy-btn" onclick="window.location.href='/trades'">查看交易紀錄</button>
+  </div>
 
-<div class="card">
-  <h2><strong>ai</strong> 投資問題</h2>
-  <hr style="border-color: var(--border-color);">
-  <p>相關投資問題。</p>
-  <a href="/ai.html">
-    <button class="buy-btn">ai投資問題</button>
-  </a>
-</div>
+  <div class="card">
+    <h2><strong>ai</strong> 投資問題</h2>
+    <hr style="border-color: var(--border-color);">
+    <p>相關投資問題。</p>
+    <a href="/ai.html">
+      <button class="buy-btn">ai投資問題</button>
+    </a>
+  </div>
 
+  <script src="https://s3.tradingview.com/tv.js"></script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
 
+  <script>
+  let historyChart;
 
-<script src="https://s3.tradingview.com/tv.js"></script>
-<script src="{{ url_for('static', filename='script.js') }}"></script>
+  function queryTaiwanStock() {
+    const ticker = document.getElementById("queryTicker").value.trim();
+    if (!ticker) return alert("請輸入股票代碼");
 
-<script>
-let historyChart;
-
-function queryTaiwanStock() {
-  const ticker = document.getElementById("queryTicker").value.trim();
-  if (!ticker) return alert("請輸入股票代碼");
-
-  // 即時價格
-  fetch(`/price?ticker=${ticker}`)
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        document.getElementById("currentPrice").textContent =
-          `${ticker} 當前價格為：$${data.price}`;
-      } else {
-        document.getElementById("currentPrice").textContent = `查無即時價格：${data.message}`;
-      }
-    });
-
-  // 歷史價格趨勢圖
-  fetch(`/history?ticker=${ticker}`)
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        const labels = data.data.map(d => d.Date);
-        const prices = data.data.map(d => d.Close);
-        const ctx = document.getElementById("chart").getContext("2d");
-
-        if (historyChart) {
-          historyChart.data.labels = labels;
-          historyChart.data.datasets[0].data = prices;
-          historyChart.data.datasets[0].label = `${ticker} 過去30天`;
-          historyChart.update();
+    // 即時價格
+    fetch(`/price?ticker=${ticker}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById("currentPrice").textContent =
+            `${ticker} 當前價格為：$${data.price}`;
         } else {
-          historyChart = new Chart(ctx, {
-            type: "line",
-            data: {
-              labels: labels,
-              datasets: [{
-                label: `${ticker} 過去30天`,
-                data: prices,
-                borderColor: "#00c853",
-                fill: false
-              }]
-            },
-            options: {
-              responsive: true,
-              scales: {
-                x: {
-                  title: {
-                    display: true,
-                    text: '日期'
-                  }
-                },
-                y: {
-                  title: {
-                    display: true,
-                    text: '收盤價'
-                  }
+          document.getElementById("currentPrice").textContent = `查無即時價格：${data.message}`;
+        }
+      });
+
+    // 歷史價格趨勢圖
+    fetch(`/history?ticker=${ticker}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          const labels = data.data.map(d => d.Date);
+          const prices = data.data.map(d => d.Close);
+          const ctx = document.getElementById("chart").getContext("2d");
+
+          if (historyChart) {
+            historyChart.data.labels = labels;
+            historyChart.data.datasets[0].data = prices;
+            historyChart.data.datasets[0].label = `${ticker} 過去30天`;
+            historyChart.update();
+          } else {
+            historyChart = new Chart(ctx, {
+              type: "line",
+              data: {
+                labels: labels,
+                datasets: [{
+                  label: `${ticker} 過去30天`,
+                  data: prices,
+                  borderColor: "#00c853",
+                  fill: false
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false, /* ADD: 讓 chart-box 高度生效 */
+                scales: {
+                  x: { title: { display: true, text: '日期' } },
+                  y: { title: { display: true, text: '收盤價' } }
                 }
               }
-            }
-          });
+            });
+          }
+        } else {
+          alert("查詢歷史價格失敗：" + data.message);
         }
-      } else {
-        alert("查詢歷史價格失敗：" + data.message);
-      }
-    })
-    .catch(err => {
-      console.error("查詢錯誤", err);
-      alert("查詢過程中發生錯誤");
-    });
-    
-}
+      })
+      .catch(err => {
+        console.error("查詢錯誤", err);
+        alert("查詢過程中發生錯誤");
+      });
+  }
+  </script>
 
-
-</script>
-
+</div> <!-- /.container -->
 </body>
 </html>
