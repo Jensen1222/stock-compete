@@ -47,24 +47,25 @@
 </div>
 
 
-<!-- 即時新聞／公告（MVP） -->
+<!-- 即時新聞／公告 -->
 <div class="card">
   <h2>🚨 即時重大新聞 / 公告</h2>
-  <div class="input-group">
-    <label for="evQuery">代碼或關鍵字：</label>
-    <input type="text" id="evQuery" placeholder="例如：2330 或 台積電">
-    <select id="evHours" style="margin-left:8px;">
+
+  <!-- 輸入列 -->
+  <div class="input-row">
+    <input type="text" id="evQuery" placeholder="輸入代碼或關鍵字（例：2330 或 台積電）">
+    <select id="evHours">
       <option value="24">近 24 小時</option>
       <option value="48" selected>近 48 小時</option>
       <option value="72">近 72 小時</option>
     </select>
-    <button class="buy-btn" id="evBtn" type="button" style="margin-left:8px;">查詢</button>
+    <button class="buy-btn" id="evBtn" type="button">查詢</button>
   </div>
 
-  <div id="evList" class="table-wrapper" style="margin-top:10px;">
-    <!-- 以卡片列表方式呈現 -->
-  </div>
+  <!-- 卡片列表 -->
+  <div id="evList"></div>
 </div>
+
 
 
   <!-- 整股交易區 -->
