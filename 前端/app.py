@@ -19,6 +19,11 @@ from flask import Response, stream_with_context
 from datetime import datetime, timedelta
 import math
 import time
+import html as py_html
+from urllib.parse import quote_plus
+import xml.etree.ElementTree as ET
+from typing import Optional
+from email.utils import parsedate_to_datetime
 
 # 載入 .env 檔案
 load_dotenv()
@@ -671,34 +676,193 @@ def ask_ai():
     return Response(stream_with_context(generate(user_input, mode)), mimetype="text/plain")
 
 
-# ===== 即時新聞／公告 (MVP) =====
-NEGATIVE_KWS = ["停工","減產","虧損","調降評等","賣超","裁員","稅務","違規","罰款","火災","爆炸","停電","跳票","倒閉","減資","警示","處分"]
-POSITIVE_KWS = ["擴產","上修","買超","得標","合作","併購","創高","創新","獲利成長","認購","回購","增資","漲停","利多"]
+# ===== 風險關鍵詞 =====
+NEGATIVE_KWS = ["停工","減產","虧損","調降評等","賣超","裁員","稅務","違規","罰款","火災","爆炸","停電","跳票","倒閉","減資","警示","處分","下修","解雇"]
+POSITIVE_KWS = ["擴產","上修","買超","得標","合作","併購","創高","創新","獲利成長","認購","回購","增資","漲停","利多","展望正面"]
 
-def _label_risk(text: str):
+def _label_risk(text: str) -> str:
     t = (text or "").strip()
     if any(k in t for k in NEGATIVE_KWS): return "negative"
     if any(k in t for k in POSITIVE_KWS): return "positive"
     return "neutral"
 
-def _maybe_get_name_by_code(q: str):
+def _maybe_get_name_by_code(q: str) -> Optional[str]:
     q = (q or "").strip()
-    if not q: return None
-    # 若是 4 碼數字，嘗試從 stock_info_df 取名稱
-    if q.isdigit() and len(q) in (4,5):
+    if q.isdigit() and len(q) in (4, 5):
         row = stock_info_df[stock_info_df["stock_id"] == q]
         if not row.empty:
-            return row.iloc[0]["stock_name"]
+            return str(row.iloc[0]["stock_name"])
     return None
 
+# ===== Google News RSS 備援（免安裝第三方套件） =====
+def _fetch_google_news_rss(keyword: str, hours: int = 48, limit: int = 50):
+    """
+    從 Google News RSS 抓關鍵字新聞（台灣／繁中）
+    回傳 list[dict]: {type, title, source, time, url, risk}
+    """
+    base = "https://news.google.com/rss/search"
+    url = f"{base}?q={quote_plus(keyword)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; NewsFetcher/1.0; +https://example.com)"
+    }
+    try:
+        resp = requests.get(url, timeout=10, headers=headers)
+        if resp.status_code != 200 or not resp.text:
+            return []
+        root = ET.fromstring(resp.text)
+        channel = root.find("channel")
+        if channel is None:
+            return []
+
+        cutoff = datetime.now() - timedelta(hours=hours)
+        out = []
+        for item in channel.findall("item"):
+            title_raw = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            # 優先 DC:date，其次 pubDate
+            pub_date_str = (item.findtext("{http://purl.org/dc/elements/1.1/}date")
+                            or item.findtext("pubDate") or "").strip()
+
+            # 解析時間（盡力而為）
+            keep = True
+            try:
+                dt = parsedate_to_datetime(pub_date_str) if pub_date_str else None
+                if dt and dt.tzinfo:
+                    dt = dt.astimezone(tz=None).replace(tzinfo=None)
+                if dt and dt < cutoff:
+                    keep = False
+            except Exception:
+                pass
+            if not keep:
+                continue
+
+            # 拆出來源：「標題 - 來源」格式常見
+            source = ""
+            title = title_raw
+            if " - " in title_raw:
+                *tparts, src = title_raw.split(" - ")
+                title = " - ".join(tparts).strip()
+                source = src.strip()
+
+            # 移除 HTML 實體
+            title = py_html.unescape(title)
+
+            out.append({
+                "type": "news",
+                "title": title,
+                "source": source or "Google News",
+                "time": pub_date_str or datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "url": link,
+                "risk": _label_risk(title),
+            })
+            if len(out) >= limit:
+                break
+        return out
+    except Exception as e:
+        print(f"[rss] fetch error: {e}")
+        return []
+
+# ===== FinMind 抓新聞（多路徑嘗試） =====
+def _try_fetch_news(code: Optional[str], keyword: Optional[str],
+                    start_date: str, end_date: str, debug_log: list):
+    import pandas as pd
+    frames = []
+
+    # 1) stock_id + start/end
+    if code:
+        try:
+            df = api.taiwan_stock_news(stock_id=code, start_date=start_date, end_date=end_date)
+            debug_log.append(f"news(stock_id,start/end): {len(df) if df is not None else 'None'}")
+            if df is not None and not df.empty: frames.append(df)
+        except Exception as e:
+            debug_log.append(f"news(stock_id,start/end) error: {e}")
+
+    # 2) keyword + start/end
+    if keyword:
+        try:
+            df = api.taiwan_stock_news(keyword=keyword, start_date=start_date, end_date=end_date)
+            debug_log.append(f"news(keyword,start/end): {len(df) if df is not None else 'None'}")
+            if df is not None and not df.empty: frames.append(df)
+        except Exception as e:
+            debug_log.append(f"news(keyword,start/end) error: {e}")
+
+    # 3) 單日掃描（近幾天逐日）
+    try:
+        days = 5
+        for i in range(days):
+            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            try:
+                if code:
+                    df = api.taiwan_stock_news(stock_id=code, date=d)
+                    if df is not None and not df.empty: frames.append(df)
+                if keyword:
+                    dfk = api.taiwan_stock_news(keyword=keyword, date=d)
+                    if dfk is not None and not dfk.empty: frames.append(dfk)
+            except Exception:
+                pass
+        debug_log.append(f"news(daily sweep frames): {sum(len(f) for f in frames) if frames else 0}")
+    except Exception as e:
+        debug_log.append(f"news(daily sweep) error: {e}")
+
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+    return pd.DataFrame()
+
+# ===== FinMind 抓公告（多函式名容錯） =====
+def _try_fetch_ann(code: Optional[str], keyword: Optional[str],
+                   start_date: str, end_date: str, debug_log: list):
+    import pandas as pd
+    frames = []
+    funcs = []
+    for name in ["taiwan_stock_announcement", "taiwan_stock_announcements"]:
+        f = getattr(api, name, None)
+        if f: funcs.append(f)
+
+    # 1) start/end
+    for f in funcs:
+        try:
+            if code:
+                df = f(stock_id=code, start_date=start_date, end_date=end_date)
+                debug_log.append(f"{f.__name__}(stock_id,start/end): {len(df) if df is not None else 'None'}")
+                if df is not None and not df.empty: frames.append(df)
+            if keyword:
+                df = f(keyword=keyword, start_date=start_date, end_date=end_date)
+                debug_log.append(f"{f.__name__}(keyword,start/end): {len(df) if df is not None else 'None'}")
+                if df is not None and not df.empty: frames.append(df)
+        except Exception as e:
+            debug_log.append(f"{f.__name__}(start/end) error: {e}")
+
+    # 2) 單日掃描
+    for f in funcs:
+        try:
+            days = 5
+            for i in range(days):
+                d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                try:
+                    if code:
+                        df = f(stock_id=code, date=d)
+                        if df is not None and not df.empty: frames.append(df)
+                    if keyword:
+                        dfk = f(keyword=keyword, date=d)
+                        if dfk is not None and not dfk.empty: frames.append(dfk)
+                except Exception:
+                    pass
+            debug_log.append(f"{f.__name__}(daily sweep frames): {sum(len(fm) for fm in frames) if frames else 0}")
+        except Exception as e:
+            debug_log.append(f"{f.__name__}(daily sweep) error: {e}")
+
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+    return pd.DataFrame()
+
+# ===== API：即時新聞／公告（FinMind + RSS 備援） =====
 @app.get("/api/events")
 @login_required
 def api_events():
     """
-    用法：
-      /api/events?query=2330&hours=48&limit=50
-      /api/events?query=台積電
-    回傳：近 X 小時內的新聞與公告（能抓多少算多少），附粗略風險標記
+    /api/events?query=2330&hours=48&limit=50
+    /api/events?query=台積電
+    FinMind 抓不到 → 自動用 Google News RSS 備援
     """
     q = request.args.get("query", "").strip()
     hours = int(request.args.get("hours", "48"))
@@ -706,128 +870,90 @@ def api_events():
     if not q:
         return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
 
-    since_dt = datetime.now() - timedelta(hours=hours)
-    start_date = since_dt.strftime("%Y-%m-%d")
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    # 準備查詢條件
+    debug_log = []
     is_code = q.isdigit()
     code = q if is_code else None
-    name = _maybe_get_name_by_code(q) if is_code else q  # 若輸入代碼，補上公司名；若輸入文字，直接拿來當關鍵詞
+    keyword = _maybe_get_name_by_code(q) if is_code else q
+
+    since_dt = datetime.now() - timedelta(hours=hours)
+    start_date = since_dt.strftime("%Y-%m-%d")
+    end_date = datetime.now().strftime("%Y-%m-%d")
 
     items = []
 
-    # ---- 先以代碼嘗試抓新聞（部分 FinMind 版本支援以 stock_id 查新聞）----
+    # ---- FinMind 新聞 ----
     try:
-        if code:
-            # 有些 FinMind 版本是按「date 單日」查，這裡就掃最近幾天
-            # 如果你的 DataLoader 支援 start/end，就自行優化為一次拉多天
-            days = max(2, hours // 24 + 2)
-            for i in range(days):
-                d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-                try:
-                    df_news = api.taiwan_stock_news(stock_id=code, date=d)
-                except Exception:
-                    df_news = pd.DataFrame()
-                if df_news is None or df_news.empty:
-                    continue
-                for _, r in df_news.iterrows():
-                    t = str(r.get("title") or "")
-                    src = str(r.get("source") or "")
-                    url = str(r.get("url") or "")
-                    dt = str(r.get("date") or d)
-                    # 過濾時間窗（若 df 沒有時間，先不過濾，小概率包含更早新聞）
-                    if dt >= start_date:
-                        items.append({
-                            "type": "news",
-                            "title": t,
-                            "source": src,
-                            "time": dt,
-                            "url": url,
-                            "risk": _label_risk(t)
-                        })
-    except Exception as e:
-        print(f"[events] code news fetch error: {e}")
-
-    # ---- 以關鍵字補抓新聞（公司名 / 自然語句）----
-    try:
-        kw = name or q
-        days = max(2, hours // 24 + 2)
-        for i in range(days):
-            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            try:
-                # 某些版本支援 keyword 參數；若不支援可忽略（不會壞）
-                df_news_kw = api.taiwan_stock_news(keyword=kw, date=d)
-            except Exception:
-                df_news_kw = pd.DataFrame()
-            if df_news_kw is None or df_news_kw.empty:
-                continue
-            for _, r in df_news_kw.iterrows():
-                t = str(r.get("title") or "")
-                src = str(r.get("source") or "")
-                url = str(r.get("url") or "")
-                dt = str(r.get("date") or d)
-                if dt >= start_date:
+        df_news = _try_fetch_news(code, keyword, start_date, end_date, debug_log)
+        if df_news is not None and not df_news.empty:
+            for _, r in df_news.iterrows():
+                title = str(r.get("title") or r.get("news_title") or "")
+                src = str(r.get("source") or r.get("media") or "新聞")
+                url = str(r.get("url") or r.get("link") or "")
+                dt = str(r.get("date") or r.get("time") or end_date)
+                if dt >= start_date and title:
                     items.append({
                         "type": "news",
-                        "title": t,
+                        "title": title,
                         "source": src,
                         "time": dt,
                         "url": url,
-                        "risk": _label_risk(t)
+                        "risk": _label_risk(title),
                     })
+        else:
+            debug_log.append("FinMind news empty")
     except Exception as e:
-        print(f"[events] keyword news fetch error: {e}")
+        debug_log.append(f"news total error: {e}")
 
-    # ---- 公告（公開資訊觀測站）可用就抓；抓不到直接略過，不影響回應 ----
+    # ---- FinMind 公告 ----
     try:
-        # 常見版本名稱：taiwan_stock_announcement / taiwan_stock_announcements
-        days = max(2, hours // 24 + 2)
-        for i in range(days):
-            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            df_ann = pd.DataFrame()
-            try:
-                df_ann = api.taiwan_stock_announcement(stock_id=code, date=d) if code else api.taiwan_stock_announcement(keyword=name, date=d)
-            except Exception:
-                try:
-                    df_ann = api.taiwan_stock_announcements(stock_id=code, date=d) if code else api.taiwan_stock_announcements(keyword=name, date=d)
-                except Exception:
-                    df_ann = pd.DataFrame()
-
-            if df_ann is None or df_ann.empty:
-                continue
+        df_ann = _try_fetch_ann(code, keyword, start_date, end_date, debug_log)
+        if df_ann is not None and not df_ann.empty:
             for _, r in df_ann.iterrows():
-                t = str(r.get("title") or "")
-                src = "公開資訊觀測站"
-                url = str(r.get("url") or "")
-                dt = str(r.get("date") or d)
-                if dt >= start_date:
+                title = str(r.get("title") or r.get("subject") or "")
+                url = str(r.get("url") or r.get("link") or "")
+                dt = str(r.get("date") or r.get("time") or end_date)
+                if dt >= start_date and title:
                     items.append({
                         "type": "announcement",
-                        "title": t,
-                        "source": src,
+                        "title": title,
+                        "source": "公開資訊觀測站",
                         "time": dt,
                         "url": url,
-                        "risk": _label_risk(t)
+                        "risk": _label_risk(title),
                     })
+        else:
+            debug_log.append("FinMind announcements empty")
     except Exception as e:
-        print(f"[events] announcement fetch error: {e}")
+        debug_log.append(f"ann total error: {e}")
 
-    # ---- 去重（依 title+source）與排序 ----
+    # ---- FinMind 完全抓不到 → RSS 備援 ----
+    if not items:
+        rss_kw = (keyword or q).strip()
+        rss_items = _fetch_google_news_rss(rss_kw, hours=hours, limit=limit)
+        debug_log.append(f"RSS items: {len(rss_items)}")
+        items.extend(rss_items)
+
+    # ---- 去重 + 排序 ----
     seen = set()
     dedup = []
     for it in items:
-        key = (it["title"], it["source"])
-        if key in seen: continue
+        key = (it.get("title","").strip().lower(), (it.get("source","") or "").strip().lower())
+        if key in seen:
+            continue
         seen.add(key)
         dedup.append(it)
 
-    dedup.sort(key=lambda x: x["time"], reverse=True)
-    if not dedup:
-        # 至少回一筆提示，避免前端空白不知道發生什麼
-        return jsonify(success=True, query=q, items=[], window_hours=hours, message="查無近期新聞/公告或資料來源不支援此查詢")
+    # FinMind 的 time 多為 YYYY-MM-DD，可字串排序；RSS time 可能無法可靠排序
+    dedup.sort(key=lambda x: x.get("time", ""), reverse=True)
 
-    return jsonify(success=True, query=q, items=dedup[:limit], window_hours=hours)
+    return jsonify(
+        success=True,
+        query=q,
+        items=dedup[:limit],
+        window_hours=hours,
+        debug=debug_log
+    )
+
 
 
 if __name__ == "__main__":

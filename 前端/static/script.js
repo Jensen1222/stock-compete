@@ -300,65 +300,66 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
 });
 
-// ===== 即時新聞／公告（MVP）前端 =====
-(function () {
-  const $ = (s) => document.querySelector(s);
+async function fetchEvents() {
+  const q = document.getElementById("evQuery").value.trim();
+  if (!q) return alert("請輸入代碼或關鍵字");
 
-  function riskBadge(risk) {
-    const map = {
-      positive: { text: "正面", cls: "badge-pos" },
-      negative: { text: "負面", cls: "badge-neg" },
-      neutral:  { text: "中性", cls: "badge-neu" },
-    };
-    const m = map[risk] || map.neutral;
-    return `<span class="badge ${m.cls}">${m.text}</span>`;
-  }
+  const list = document.getElementById("evList");
+  list.innerHTML = `<li style="color:#94a3b8;">查詢中…</li>`;
 
-  function renderEvents(items, container) {
-    if (!container) return;
-    if (!items || items.length === 0) {
-      container.innerHTML = `<p style="color:#94a3b8;">查無近期新聞/公告</p>`;
+  try {
+    const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=48&limit=50`);
+    const data = await res.json();
+
+    // 把 debug 資訊輸出到 console 方便排錯
+    if (data.debug) console.log("[/api/events debug]", data.debug);
+
+    if (!data.success) {
+      list.innerHTML = `<li style="color:#ef4444;">${data.message || "查詢失敗"}</li>`;
       return;
     }
-    container.innerHTML = items.map(it => `
-      <div class="event-item" style="border:1px solid var(--border-color); border-radius:12px; padding:12px; margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div style="font-weight:600;">${it.title}</div>
-          ${riskBadge(it.risk)}
-        </div>
-        <div style="margin-top:6px; font-size:14px; color:#94a3b8;">
-          來源：${it.source}　時間：${it.time}
-        </div>
-        ${it.url ? `<div style="margin-top:6px;"><a href="${it.url}" target="_blank" rel="noopener" style="color:#60a5fa;">前往原文</a></div>` : ""}
-      </div>
-    `).join("");
-  }
 
-  async function fetchEvents() {
-    const q = $("#evQuery")?.value.trim();
-    const hours = $("#evHours")?.value || "48";
-    if (!q) { alert("請輸入代碼或關鍵字"); return; }
-    const list = $("#evList");
-    list.innerHTML = `<p style="color:#94a3b8;">查詢中…</p>`;
-    try {
-      const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=${hours}&limit=50`);
-      const data = await res.json();
-      if (!data.success) {
-        list.innerHTML = `<p style="color:#ef4444;">${data.message || "查詢失敗"}</p>`;
-        return;
-      }
-      renderEvents(data.items, list);
-    } catch (err) {
-      console.error("events error:", err);
-      list.innerHTML = `<p style="color:#ef4444;">查詢過程發生錯誤</p>`;
+    // 沒資料時顯示提示
+    if (!data.items || data.items.length === 0) {
+      list.innerHTML = `<li style="color:#94a3b8;">查無近期新聞/公告</li>`;
+      return;
     }
+
+    renderEvents(data.items, list);
+  } catch (err) {
+    console.error("fetchEvents error", err);
+    list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤</li>`;
   }
+}
 
-  window.addEventListener("DOMContentLoaded", () => {
-    const btn = document.getElementById("evBtn");
-    if (btn) btn.addEventListener("click", fetchEvents);
-    const q = document.getElementById("evQuery");
-    if (q && !q.value) q.value = "2330";
+// 渲染新聞/公告列表
+function renderEvents(items, container) {
+  container.innerHTML = "";
+  items.forEach(it => {
+    const li = document.createElement("li");
+    li.style.marginBottom = "6px";
+    li.innerHTML = `
+      <a href="${it.url}" target="_blank" style="text-decoration:none;">
+        <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
+        <span style="color:${it.risk === "negative" ? "red" : it.risk === "positive" ? "green" : "inherit"};">
+          ${it.title}
+        </span>
+        <span style="font-size:12px;color:#94a3b8;">(${it.source} ${it.time})</span>
+      </a>
+    `;
+    container.appendChild(li);
   });
-})();
+}
 
+// 綁定按鈕與 Enter 鍵
+window.addEventListener("DOMContentLoaded", () => {
+  const btn = document.getElementById("evBtn");
+  const q = document.getElementById("evQuery");
+  if (btn) btn.addEventListener("click", fetchEvents);
+  if (q) {
+    if (!q.value) q.value = "2330"; // 預設台積電
+    q.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") fetchEvents();
+    });
+  }
+});
