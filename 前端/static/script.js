@@ -272,6 +272,8 @@ function queryTaiwanStock() {
     });
 }
 
+
+
 // 初始化與按鈕綁定
 window.addEventListener('DOMContentLoaded', () => {
   loadPortfolio();
@@ -297,3 +299,71 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('buy-lot-btn')?.addEventListener('click', () => tradeLot('買入'));
   document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
 });
+
+// ====== 對比分析（MVP）前端 ======
+(function () {
+  const $ = (sel) => document.querySelector(sel);
+
+  function fmtPct(x) {
+    if (x === null || x === undefined || Number.isNaN(x)) return "—";
+    return (x * 100).toFixed(2) + "%";
+  }
+
+  function renderCompare(rows) {
+    const tbody = $("#compare-table tbody");
+    if (!tbody) return; // 頁面沒有比較表就直接跳過
+    tbody.innerHTML = "";
+    rows.forEach((r) => {
+      const tr = document.createElement("tr");
+      const ret = r.metrics?.returns || {};
+      const vol = r.metrics?.vol_annual;
+      const mdd = r.metrics?.mdd;
+
+      tr.innerHTML = `
+        <td>${r.code}</td>
+        <td>${fmtPct(ret["30"])}</td>
+        <td>${fmtPct(ret["90"])}</td>
+        <td>${fmtPct(ret["180"])}</td>
+        <td>${fmtPct(ret["360"])}</td>
+        <td>${fmtPct(vol)}</td>
+        <td>${fmtPct(mdd)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function doCompare() {
+    const input = document.getElementById("compareCodes");
+    if (!input) return; // 頁面沒有比較卡就直接跳過
+    const codes = input.value.trim();
+    if (!codes) {
+      alert("請輸入代碼，逗號分隔，例如：2330,0050,00900");
+      return;
+    }
+    const params = new URLSearchParams({
+      codes,
+      windows: "30,90,180,360",
+    });
+    try {
+      const res = await fetch(`/api/compare?${params.toString()}`);
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.message || "查詢失敗");
+        return;
+      }
+      renderCompare(data.result || []);
+    } catch (err) {
+      console.error("compare error:", err);
+      alert("查詢過程發生錯誤");
+    }
+  }
+
+  // 綁定按鈕與預設值
+  window.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("compareBtn");
+    const input = document.getElementById("compareCodes");
+    if (input && !input.value) input.value = "2330,0050,00900";
+    if (btn) btn.addEventListener("click", doCompare);
+  });
+})();
+
