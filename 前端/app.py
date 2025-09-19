@@ -17,6 +17,8 @@ from openai import OpenAI
 from FinMind.data import DataLoader
 from flask import Response, stream_with_context
 from datetime import datetime, timedelta
+import math
+import time
 
 # 載入 .env 檔案
 load_dotenv()
@@ -667,6 +669,84 @@ def ask_ai():
             yield f"\n❌ GPT 回覆失敗：{str(e)}"
 
     return Response(stream_with_context(generate(user_input, mode)), mimetype="text/plain")
+
+
+# ====== Compare (MVP) ======
+def _get_price_df_simple(code: str, start_date: str):
+    """用 FinMind 拉收盤價；只回傳 date, close"""
+    try:
+        df = api.taiwan_stock_daily(stock_id=code, start_date=start_date)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df[df["close"].notna()].copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)[["date", "close"]]
+        return df
+    except Exception as e:
+        print(f"[compare] price fetch error {code}: {e}")
+        return pd.DataFrame()
+
+def _calc_metrics_simple(price_df: pd.DataFrame, windows=(30, 90, 180, 360)):
+    """計算多窗報酬、年化波動度、最大回檔"""
+    if price_df.empty or len(price_df) < 2:
+        return {"returns": {}, "vol_annual": None, "mdd": None}
+
+    df = price_df.copy()
+    df["ret"] = df["close"].pct_change()
+
+    # 年化波動度：日報酬 std * sqrt(252)
+    vol_annual = None
+    if df["ret"].notna().any():
+        vol_annual = float(df["ret"].std(ddof=0) * math.sqrt(252))
+
+    # 最大回檔：close / cummax - 1 的最小值
+    cummax = df["close"].cummax()
+    drawdown = df["close"] / cummax - 1.0
+    mdd = float(drawdown.min()) if not drawdown.empty else None
+
+    # 多視窗報酬率
+    returns = {}
+    for w in windows:
+        if len(df) > (w + 1):
+            r = float(df["close"].iloc[-1] / df["close"].iloc[-w-1] - 1.0)
+        else:
+            r = None
+        returns[str(w)] = r
+
+    return {"returns": returns, "vol_annual": vol_annual, "mdd": mdd}
+
+@app.get("/api/compare")
+@login_required
+def api_compare_simple():
+    """
+    範例：
+    GET /api/compare?codes=2330,0050,00900&windows=30,90,180,360
+    回傳各檔 30/90/180/360 天報酬率、年化波動度、最大回檔
+    """
+    codes_raw = request.args.get("codes", "").strip()
+    if not codes_raw:
+        return jsonify(success=False, message="請提供 codes，例如 ?codes=2330,0050"), 400
+
+    try:
+        windows = tuple(map(int, request.args.get("windows", "30,90,180,360").split(",")))
+    except Exception:
+        windows = (30, 90, 180, 360)
+
+    codes = [c.strip() for c in codes_raw.split(",") if c.strip()]
+    if not codes:
+        return jsonify(success=False, message="codes 參數格式錯誤"), 400
+
+    max_w = max(windows) if windows else 180
+    # 多抓一倍天數，避免缺資料
+    start_date = (datetime.today() - timedelta(days=max_w * 2)).strftime("%Y-%m-%d")
+
+    out = []
+    for code in codes:
+        price_df = _get_price_df_simple(code, start_date)
+        metrics = _calc_metrics_simple(price_df, windows)
+        out.append({"code": code, "metrics": metrics})
+
+    return jsonify(success=True, result=out)
 
 
 

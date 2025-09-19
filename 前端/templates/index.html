@@ -83,6 +83,38 @@
     </div>
   </div>
 
+
+    <!-- 對比分析（MVP） -->
+  <div class="card">
+    <h2>ETF/股票 對比分析（MVP）</h2>
+    <div class="input-group">
+      <label for="compareCodes">代碼（用逗號分隔）：</label>
+      <input type="text" id="compareCodes" placeholder="例如：2330,0050,00900">
+      <button class="buy-btn" id="compareBtn" type="button">開始比較</button>
+    </div>
+
+    <div class="table-wrapper" style="margin-top: 10px;">
+      <table id="compare-table">
+        <thead>
+          <tr>
+            <th>代碼</th>
+            <th>30天報酬</th>
+            <th>90天報酬</th>
+            <th>180天報酬</th>
+            <th>360天報酬</th>
+            <th>年化波動度</th>
+            <th>最大回檔</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- 比較結果會動態填入 -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  
+
   <!-- ✅ 股票查詢與趨勢圖 -->
   <div class="card chart-card"> <!-- ADD: chart-card -->
     <h2>📈 股票查詢與趨勢圖</h2>
