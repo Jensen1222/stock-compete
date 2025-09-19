@@ -300,70 +300,65 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
 });
 
-// ====== 對比分析（MVP）前端 ======
+// ===== 即時新聞／公告（MVP）前端 =====
 (function () {
-  const $ = (sel) => document.querySelector(sel);
+  const $ = (s) => document.querySelector(s);
 
-  function fmtPct(x) {
-    if (x === null || x === undefined || Number.isNaN(x)) return "—";
-    return (x * 100).toFixed(2) + "%";
+  function riskBadge(risk) {
+    const map = {
+      positive: { text: "正面", cls: "badge-pos" },
+      negative: { text: "負面", cls: "badge-neg" },
+      neutral:  { text: "中性", cls: "badge-neu" },
+    };
+    const m = map[risk] || map.neutral;
+    return `<span class="badge ${m.cls}">${m.text}</span>`;
   }
 
-  function renderCompare(rows) {
-    const tbody = $("#compare-table tbody");
-    if (!tbody) return; // 頁面沒有比較表就直接跳過
-    tbody.innerHTML = "";
-    rows.forEach((r) => {
-      const tr = document.createElement("tr");
-      const ret = r.metrics?.returns || {};
-      const vol = r.metrics?.vol_annual;
-      const mdd = r.metrics?.mdd;
-
-      tr.innerHTML = `
-        <td>${r.code}</td>
-        <td>${fmtPct(ret["30"])}</td>
-        <td>${fmtPct(ret["90"])}</td>
-        <td>${fmtPct(ret["180"])}</td>
-        <td>${fmtPct(ret["360"])}</td>
-        <td>${fmtPct(vol)}</td>
-        <td>${fmtPct(mdd)}</td>
-      `;
-      tbody.appendChild(tr);
-    });
-  }
-
-  async function doCompare() {
-    const input = document.getElementById("compareCodes");
-    if (!input) return; // 頁面沒有比較卡就直接跳過
-    const codes = input.value.trim();
-    if (!codes) {
-      alert("請輸入代碼，逗號分隔，例如：2330,0050,00900");
+  function renderEvents(items, container) {
+    if (!container) return;
+    if (!items || items.length === 0) {
+      container.innerHTML = `<p style="color:#94a3b8;">查無近期新聞/公告</p>`;
       return;
     }
-    const params = new URLSearchParams({
-      codes,
-      windows: "30,90,180,360",
-    });
+    container.innerHTML = items.map(it => `
+      <div class="event-item" style="border:1px solid var(--border-color); border-radius:12px; padding:12px; margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-weight:600;">${it.title}</div>
+          ${riskBadge(it.risk)}
+        </div>
+        <div style="margin-top:6px; font-size:14px; color:#94a3b8;">
+          來源：${it.source}　時間：${it.time}
+        </div>
+        ${it.url ? `<div style="margin-top:6px;"><a href="${it.url}" target="_blank" rel="noopener" style="color:#60a5fa;">前往原文</a></div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  async function fetchEvents() {
+    const q = $("#evQuery")?.value.trim();
+    const hours = $("#evHours")?.value || "48";
+    if (!q) { alert("請輸入代碼或關鍵字"); return; }
+    const list = $("#evList");
+    list.innerHTML = `<p style="color:#94a3b8;">查詢中…</p>`;
     try {
-      const res = await fetch(`/api/compare?${params.toString()}`);
+      const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=${hours}&limit=50`);
       const data = await res.json();
       if (!data.success) {
-        alert(data.message || "查詢失敗");
+        list.innerHTML = `<p style="color:#ef4444;">${data.message || "查詢失敗"}</p>`;
         return;
       }
-      renderCompare(data.result || []);
+      renderEvents(data.items, list);
     } catch (err) {
-      console.error("compare error:", err);
-      alert("查詢過程發生錯誤");
+      console.error("events error:", err);
+      list.innerHTML = `<p style="color:#ef4444;">查詢過程發生錯誤</p>`;
     }
   }
 
-  // 綁定按鈕與預設值
   window.addEventListener("DOMContentLoaded", () => {
-    const btn = document.getElementById("compareBtn");
-    const input = document.getElementById("compareCodes");
-    if (input && !input.value) input.value = "2330,0050,00900";
-    if (btn) btn.addEventListener("click", doCompare);
+    const btn = document.getElementById("evBtn");
+    if (btn) btn.addEventListener("click", fetchEvents);
+    const q = document.getElementById("evQuery");
+    if (q && !q.value) q.value = "2330";
   });
 })();
 

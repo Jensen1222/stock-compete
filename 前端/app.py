@@ -671,83 +671,163 @@ def ask_ai():
     return Response(stream_with_context(generate(user_input, mode)), mimetype="text/plain")
 
 
-# ====== Compare (MVP) ======
-def _get_price_df_simple(code: str, start_date: str):
-    """用 FinMind 拉收盤價；只回傳 date, close"""
-    try:
-        df = api.taiwan_stock_daily(stock_id=code, start_date=start_date)
-        if df is None or df.empty:
-            return pd.DataFrame()
-        df = df[df["close"].notna()].copy()
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)[["date", "close"]]
-        return df
-    except Exception as e:
-        print(f"[compare] price fetch error {code}: {e}")
-        return pd.DataFrame()
+# ===== 即時新聞／公告 (MVP) =====
+NEGATIVE_KWS = ["停工","減產","虧損","調降評等","賣超","裁員","稅務","違規","罰款","火災","爆炸","停電","跳票","倒閉","減資","警示","處分"]
+POSITIVE_KWS = ["擴產","上修","買超","得標","合作","併購","創高","創新","獲利成長","認購","回購","增資","漲停","利多"]
 
-def _calc_metrics_simple(price_df: pd.DataFrame, windows=(30, 90, 180, 360)):
-    """計算多窗報酬、年化波動度、最大回檔"""
-    if price_df.empty or len(price_df) < 2:
-        return {"returns": {}, "vol_annual": None, "mdd": None}
+def _label_risk(text: str):
+    t = (text or "").strip()
+    if any(k in t for k in NEGATIVE_KWS): return "negative"
+    if any(k in t for k in POSITIVE_KWS): return "positive"
+    return "neutral"
 
-    df = price_df.copy()
-    df["ret"] = df["close"].pct_change()
+def _maybe_get_name_by_code(q: str):
+    q = (q or "").strip()
+    if not q: return None
+    # 若是 4 碼數字，嘗試從 stock_info_df 取名稱
+    if q.isdigit() and len(q) in (4,5):
+        row = stock_info_df[stock_info_df["stock_id"] == q]
+        if not row.empty:
+            return row.iloc[0]["stock_name"]
+    return None
 
-    # 年化波動度：日報酬 std * sqrt(252)
-    vol_annual = None
-    if df["ret"].notna().any():
-        vol_annual = float(df["ret"].std(ddof=0) * math.sqrt(252))
-
-    # 最大回檔：close / cummax - 1 的最小值
-    cummax = df["close"].cummax()
-    drawdown = df["close"] / cummax - 1.0
-    mdd = float(drawdown.min()) if not drawdown.empty else None
-
-    # 多視窗報酬率
-    returns = {}
-    for w in windows:
-        if len(df) > (w + 1):
-            r = float(df["close"].iloc[-1] / df["close"].iloc[-w-1] - 1.0)
-        else:
-            r = None
-        returns[str(w)] = r
-
-    return {"returns": returns, "vol_annual": vol_annual, "mdd": mdd}
-
-@app.get("/api/compare")
+@app.get("/api/events")
 @login_required
-def api_compare_simple():
+def api_events():
     """
-    範例：
-    GET /api/compare?codes=2330,0050,00900&windows=30,90,180,360
-    回傳各檔 30/90/180/360 天報酬率、年化波動度、最大回檔
+    用法：
+      /api/events?query=2330&hours=48&limit=50
+      /api/events?query=台積電
+    回傳：近 X 小時內的新聞與公告（能抓多少算多少），附粗略風險標記
     """
-    codes_raw = request.args.get("codes", "").strip()
-    if not codes_raw:
-        return jsonify(success=False, message="請提供 codes，例如 ?codes=2330,0050"), 400
+    q = request.args.get("query", "").strip()
+    hours = int(request.args.get("hours", "48"))
+    limit = int(request.args.get("limit", "50"))
+    if not q:
+        return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
 
+    since_dt = datetime.now() - timedelta(hours=hours)
+    start_date = since_dt.strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # 準備查詢條件
+    is_code = q.isdigit()
+    code = q if is_code else None
+    name = _maybe_get_name_by_code(q) if is_code else q  # 若輸入代碼，補上公司名；若輸入文字，直接拿來當關鍵詞
+
+    items = []
+
+    # ---- 先以代碼嘗試抓新聞（部分 FinMind 版本支援以 stock_id 查新聞）----
     try:
-        windows = tuple(map(int, request.args.get("windows", "30,90,180,360").split(",")))
-    except Exception:
-        windows = (30, 90, 180, 360)
+        if code:
+            # 有些 FinMind 版本是按「date 單日」查，這裡就掃最近幾天
+            # 如果你的 DataLoader 支援 start/end，就自行優化為一次拉多天
+            days = max(2, hours // 24 + 2)
+            for i in range(days):
+                d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                try:
+                    df_news = api.taiwan_stock_news(stock_id=code, date=d)
+                except Exception:
+                    df_news = pd.DataFrame()
+                if df_news is None or df_news.empty:
+                    continue
+                for _, r in df_news.iterrows():
+                    t = str(r.get("title") or "")
+                    src = str(r.get("source") or "")
+                    url = str(r.get("url") or "")
+                    dt = str(r.get("date") or d)
+                    # 過濾時間窗（若 df 沒有時間，先不過濾，小概率包含更早新聞）
+                    if dt >= start_date:
+                        items.append({
+                            "type": "news",
+                            "title": t,
+                            "source": src,
+                            "time": dt,
+                            "url": url,
+                            "risk": _label_risk(t)
+                        })
+    except Exception as e:
+        print(f"[events] code news fetch error: {e}")
 
-    codes = [c.strip() for c in codes_raw.split(",") if c.strip()]
-    if not codes:
-        return jsonify(success=False, message="codes 參數格式錯誤"), 400
+    # ---- 以關鍵字補抓新聞（公司名 / 自然語句）----
+    try:
+        kw = name or q
+        days = max(2, hours // 24 + 2)
+        for i in range(days):
+            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            try:
+                # 某些版本支援 keyword 參數；若不支援可忽略（不會壞）
+                df_news_kw = api.taiwan_stock_news(keyword=kw, date=d)
+            except Exception:
+                df_news_kw = pd.DataFrame()
+            if df_news_kw is None or df_news_kw.empty:
+                continue
+            for _, r in df_news_kw.iterrows():
+                t = str(r.get("title") or "")
+                src = str(r.get("source") or "")
+                url = str(r.get("url") or "")
+                dt = str(r.get("date") or d)
+                if dt >= start_date:
+                    items.append({
+                        "type": "news",
+                        "title": t,
+                        "source": src,
+                        "time": dt,
+                        "url": url,
+                        "risk": _label_risk(t)
+                    })
+    except Exception as e:
+        print(f"[events] keyword news fetch error: {e}")
 
-    max_w = max(windows) if windows else 180
-    # 多抓一倍天數，避免缺資料
-    start_date = (datetime.today() - timedelta(days=max_w * 2)).strftime("%Y-%m-%d")
+    # ---- 公告（公開資訊觀測站）可用就抓；抓不到直接略過，不影響回應 ----
+    try:
+        # 常見版本名稱：taiwan_stock_announcement / taiwan_stock_announcements
+        days = max(2, hours // 24 + 2)
+        for i in range(days):
+            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            df_ann = pd.DataFrame()
+            try:
+                df_ann = api.taiwan_stock_announcement(stock_id=code, date=d) if code else api.taiwan_stock_announcement(keyword=name, date=d)
+            except Exception:
+                try:
+                    df_ann = api.taiwan_stock_announcements(stock_id=code, date=d) if code else api.taiwan_stock_announcements(keyword=name, date=d)
+                except Exception:
+                    df_ann = pd.DataFrame()
 
-    out = []
-    for code in codes:
-        price_df = _get_price_df_simple(code, start_date)
-        metrics = _calc_metrics_simple(price_df, windows)
-        out.append({"code": code, "metrics": metrics})
+            if df_ann is None or df_ann.empty:
+                continue
+            for _, r in df_ann.iterrows():
+                t = str(r.get("title") or "")
+                src = "公開資訊觀測站"
+                url = str(r.get("url") or "")
+                dt = str(r.get("date") or d)
+                if dt >= start_date:
+                    items.append({
+                        "type": "announcement",
+                        "title": t,
+                        "source": src,
+                        "time": dt,
+                        "url": url,
+                        "risk": _label_risk(t)
+                    })
+    except Exception as e:
+        print(f"[events] announcement fetch error: {e}")
 
-    return jsonify(success=True, result=out)
+    # ---- 去重（依 title+source）與排序 ----
+    seen = set()
+    dedup = []
+    for it in items:
+        key = (it["title"], it["source"])
+        if key in seen: continue
+        seen.add(key)
+        dedup.append(it)
 
+    dedup.sort(key=lambda x: x["time"], reverse=True)
+    if not dedup:
+        # 至少回一筆提示，避免前端空白不知道發生什麼
+        return jsonify(success=True, query=q, items=[], window_hours=hours, message="查無近期新聞/公告或資料來源不支援此查詢")
+
+    return jsonify(success=True, query=q, items=dedup[:limit], window_hours=hours)
 
 
 if __name__ == "__main__":

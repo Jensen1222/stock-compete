@@ -47,6 +47,24 @@
 </div>
 
 
+<!-- 即時新聞／公告（MVP） -->
+<div class="card">
+  <h2>🚨 即時重大新聞 / 公告</h2>
+  <div class="input-group">
+    <label for="evQuery">代碼或關鍵字：</label>
+    <input type="text" id="evQuery" placeholder="例如：2330 或 台積電">
+    <select id="evHours" style="margin-left:8px;">
+      <option value="24">近 24 小時</option>
+      <option value="48" selected>近 48 小時</option>
+      <option value="72">近 72 小時</option>
+    </select>
+    <button class="buy-btn" id="evBtn" type="button" style="margin-left:8px;">查詢</button>
+  </div>
+
+  <div id="evList" class="table-wrapper" style="margin-top:10px;">
+    <!-- 以卡片列表方式呈現 -->
+  </div>
+</div>
 
 
   <!-- 整股交易區 -->
@@ -84,36 +102,6 @@
   </div>
 
 
-    <!-- 對比分析（MVP） -->
-  <div class="card">
-    <h2>ETF/股票 對比分析（MVP）</h2>
-    <div class="input-group">
-      <label for="compareCodes">代碼（用逗號分隔）：</label>
-      <input type="text" id="compareCodes" placeholder="例如：2330,0050,00900">
-      <button class="buy-btn" id="compareBtn" type="button">開始比較</button>
-    </div>
-
-    <div class="table-wrapper" style="margin-top: 10px;">
-      <table id="compare-table">
-        <thead>
-          <tr>
-            <th>代碼</th>
-            <th>30天報酬</th>
-            <th>90天報酬</th>
-            <th>180天報酬</th>
-            <th>360天報酬</th>
-            <th>年化波動度</th>
-            <th>最大回檔</th>
-          </tr>
-        </thead>
-        <tbody>
-          <!-- 比較結果會動態填入 -->
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  
 
   <!-- ✅ 股票查詢與趨勢圖 -->
   <div class="card chart-card"> <!-- ADD: chart-card -->
