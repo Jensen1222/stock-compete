@@ -429,4 +429,16 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   text-align-last: center; 
 }
 
+/* === AI 洞察卡片樣式 === */
 #aiInsightCard .top-item a:hover { filter: brightness(1.1); }
+
+#aiInsightCard .top-item a {
+  color: #93c5fd;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+#aiInsightCard .top-item a:hover {
+  filter: brightness(1.2);
+  text-decoration: underline;
+}
