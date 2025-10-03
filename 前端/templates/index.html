@@ -64,26 +64,28 @@
 
   <!-- 卡片列表 -->
   <div id="evList"></div>
+  <!-- 第二次按：顯示全部（預設隱藏） -->
+  <button id="evShowAllBtn" class="buy-btn" style="display:none">顯示全部</button>
 </div>
 
 
 
-  <!-- 整股交易區 -->
-  <div class="card">
-    <h2>整股交易區</h2>
-    <div class="input-group">
-      <label for="ticker">股票代號：</label>
-      <input type="text" id="ticker" placeholder="例如：2330" required>
-    </div>
-    <div class="input-group">
-      <label for="quantity">數量（張）：</label>
-      <input type="number" id="quantity" placeholder="例如：10" required>
-    </div>
-    <div class="input-group">
-      <button class="buy-btn" onclick="buyStock()">買入</button>
-      <button class="sell-btn" onclick="sellStock()">賣出</button>
-    </div>
+<!-- 整股交易區 -->
+<div class="card">
+  <h2>整股交易區</h2>
+  <div class="input-group">
+    <label for="ticker">股票代號：</label>
+    <input type="text" id="ticker" placeholder="例如：2330" required>
   </div>
+  <div class="input-group">
+    <label for="quantity">數量（張）：</label>
+    <input type="number" id="quantity" placeholder="例如：10" required>
+  </div>
+  <div class="input-group">
+    <button class="buy-btn" onclick="buyStock()">買入</button>
+    <button class="sell-btn" onclick="sellStock()">賣出</button>
+  </div>
+</div>
 
   <!-- 零股交易區 -->
   <div class="card">

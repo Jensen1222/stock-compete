@@ -277,10 +277,12 @@ function queryTaiwanStock() {
 // 初始化與按鈕綁定
 window.addEventListener('DOMContentLoaded', () => {
   loadPortfolio();
+  loadUserRank(); // 排名
   document.getElementById('buy-lot-btn')?.addEventListener('click', () => tradeLot('買入'));
   document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
 });
 
+// 排名
 function loadUserRank() {
   fetch('/api/user-rank')
     .then(r => r.json())
@@ -293,25 +295,26 @@ function loadUserRank() {
     .catch(err => console.error('載入排名失敗', err));
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-  loadPortfolio();
-  loadUserRank(); // ← 加這行
-  document.getElementById('buy-lot-btn')?.addEventListener('click', () => tradeLot('買入'));
-  document.getElementById('sell-lot-btn')?.addEventListener('click', () => tradeLot('賣出'));
-});
-
+// ======== 新聞 / 公告 ========
 async function fetchEvents() {
-  const q = document.getElementById("evQuery").value.trim();
+  const qInput = document.getElementById("evQuery");
+  const hoursSel = document.getElementById("evHours");
+  const btn = document.getElementById("evBtn");
+  const list = document.getElementById("evList");
+
+  const q = qInput?.value.trim();
+  const hours = hoursSel?.value || 48;
+
   if (!q) return alert("請輸入代碼或關鍵字");
 
-  const list = document.getElementById("evList");
   list.innerHTML = `<li style="color:#94a3b8;">查詢中…</li>`;
+  btn && (btn.disabled = true);
 
   try {
-    const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=48&limit=50`);
+    const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=${encodeURIComponent(hours)}&limit=50`);
     const data = await res.json();
 
-    // 把 debug 資訊輸出到 console 方便排錯
+    // debug 輸出（若後端有回傳）
     if (data.debug) console.log("[/api/events debug]", data.debug);
 
     if (!data.success) {
@@ -325,30 +328,69 @@ async function fetchEvents() {
       return;
     }
 
-    renderEvents(data.items, list);
+    // ✨ 一次取回全部，但初次只顯示 5 筆
+    renderEventsOnceThenAll(data.items, list);
   } catch (err) {
     console.error("fetchEvents error", err);
     list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤</li>`;
+  } finally {
+    btn && (btn.disabled = false);
   }
 }
 
-// 渲染新聞/公告列表
-function renderEvents(items, container) {
+// 初次渲染 5 筆，其餘在按鈕點擊後一次展開
+function renderEventsOnceThenAll(items, container) {
   container.innerHTML = "";
-  items.forEach(it => {
-    const li = document.createElement("li");
-    li.style.marginBottom = "6px";
-    li.innerHTML = `
-      <a href="${it.url}" target="_blank" style="text-decoration:none;">
-        <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
-        <span style="color:${it.risk === "negative" ? "red" : it.risk === "positive" ? "green" : "inherit"};">
-          ${it.title}
-        </span>
-        <span style="font-size:12px;color:#94a3b8;">(${it.source} ${it.time})</span>
-      </a>
-    `;
-    container.appendChild(li);
-  });
+
+  // 先顯示前 5 筆
+  const first = items.slice(0, 5);
+  first.forEach(it => container.appendChild(buildEventItem(it)));
+
+  // 如果超過 5 筆，補一顆「顯示全部」按鈕
+  if (items.length > 5) {
+    const btn = document.createElement("button");
+    btn.textContent = "顯示全部";
+    btn.className = "buy-btn";
+    btn.style.marginTop = "8px";
+
+    btn.onclick = () => {
+      items.slice(5).forEach(it => container.appendChild(buildEventItem(it)));
+      btn.remove(); // 展開後隱藏按鈕
+    };
+
+    // 用 <li> 包一層，和清單結構一致（若你用 <ul>/<ol>）
+    const wrap = document.createElement("li");
+    wrap.style.listStyle = "none";
+    wrap.appendChild(btn);
+    container.appendChild(wrap);
+  }
+}
+
+// 建立單一列表項目
+function buildEventItem(it) {
+  const li = document.createElement("li");
+  li.style.marginBottom = "6px";
+  li.innerHTML = `
+    <a href="${it.url}" target="_blank" style="text-decoration:none;">
+      <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
+      <span style="color:${it.risk === "negative" ? "red" : it.risk === "positive" ? "green" : "inherit"};">
+        ${escapeHtml(it.title)}
+      </span>
+      <span style="font-size:12px;color:#94a3b8;">(${escapeHtml(it.source)} ${escapeHtml(it.time)})</span>
+    </a>
+  `;
+  return li;
+}
+
+// 簡單的 XSS 防護（避免 title/source/time 含特殊字元）
+function escapeHtml(s) {
+  if (typeof s !== "string") return "";
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 // 綁定按鈕與 Enter 鍵
