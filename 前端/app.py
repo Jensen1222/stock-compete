@@ -955,6 +955,121 @@ def api_events():
     )
 
 
+# --------------------(ADD) AI Insight Helpers --------------------
+AI_PROMPT_MINI = (
+    "你是金融事件分析助手。請針對輸入的一則中文新聞或公告，僅回傳 JSON：\n"
+    "{\n"
+    "  \"direction\": -1 | 0 | 1,\n"
+    "  \"severity\": 1-5,\n"
+    "  \"horizon\": \"短\"|\"中\"|\"長\",\n"
+    "  \"confidence\": 0.0-1.0,\n"
+    "  \"why\": \"50字內重點原因\"\n"
+    "}\n"
+    "若無法判斷，direction=0、severity=1、confidence<=0.3。"
+)
+
+def _ai_rule_eval_basic(title: str) -> dict:
+    # 用你現有的風險關鍵詞打底，無金鑰或失敗時使用
+    risk = _label_risk(title or "")
+    if risk == "positive":
+        return {"direction": 1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏多關鍵詞"}
+    if risk == "negative":
+        return {"direction": -1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏空關鍵詞"}
+    return {"direction": 0, "severity": 1, "horizon": "短", "confidence": 0.3, "why": "資訊有限"}
+
+def _ai_event_score(info: dict) -> float:
+    d = int(info.get("direction", 0))
+    sev = max(1, min(5, int(info.get("severity", 1))))
+    conf = max(0.0, min(1.0, float(info.get("confidence", 0.0))))
+    return d * sev * conf
+
+def _ai_eval_one_event(text: str) -> dict:
+    # 有 OPENAI_API_KEY 才走 LLM，否則走規則
+    if not api_key:
+        return _ai_rule_eval_basic(text)
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": AI_PROMPT_MINI},
+                {"role": "user", "content": text[:1800]},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        msg = resp.choices[0].message
+        parsed = getattr(msg, "parsed", None) or getattr(msg, "content", None)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception as e:
+        print(f"[AI] error fallback: {e}")
+    return _ai_rule_eval_basic(text)
+
+# *共用* 事件收集器（直接重用你既有的 /api/events 資料結構）
+def _collect_events_for_ai(query: str, hours: int = 48, limit: int = 50):
+    # 這裡直接呼叫你現有的 /api/events 內部邏輯比較安全
+    # 為「純新增」，不去改舊函式；改用 requests loopback 呼叫自己的 API 也可，但本地內聯更穩
+    with app.test_request_context(f"/api/events?query={query}&hours={hours}&limit={limit}"):
+        resp = api_events()
+        # api_events() 回傳的是 Flask Response 或 tuple，統一讀 json
+        try:
+            data = resp.get_json()
+        except AttributeError:
+            # 若是 (response, status) 形式
+            data = resp[0].get_json() if isinstance(resp, tuple) else {}
+    items = (data or {}).get("items", [])
+    debug = (data or {}).get("debug", [])
+    return items, debug
+
+# --------------------(ADD) AI Insight Endpoint --------------------
+@app.get("/api/ai/insight")
+@login_required
+def api_ai_insight_addon():
+    """
+    純新增端點，不動原有 /api/events
+    用既有事件資料，逐則做 AI 評分並聚合：
+    GET /api/ai/insight?query=2330&hours=48&limit=50
+    """
+    q = request.args.get("query", "").strip()
+    hours = int(request.args.get("hours", "48"))
+    limit = int(request.args.get("limit", "50"))
+    if not q:
+        return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
+
+    items, debug_log = _collect_events_for_ai(q, hours=hours, limit=limit)
+
+    enriched = []
+    for ev in items:
+        text = f"{ev.get('title','')}（來源:{ev.get('source','')} 時間:{ev.get('time','')}）"
+        info = _ai_eval_one_event(text)
+        ev_score = _ai_event_score(info)
+        enriched.append({**ev, **info, "event_score": ev_score})
+
+    if not enriched:
+        return jsonify(success=True, query=q, stock_score=0.0, items=[], top_items=[], debug=debug_log)
+
+    # 聚合（|event_score| 當權重）
+    num = den = 0.0
+    for x in enriched:
+        w = max(0.1, abs(x["event_score"]))
+        num += x["event_score"] * w
+        den += w
+    stock_score = num / den if den > 0 else 0.0
+
+    top_items = sorted(enriched, key=lambda z: abs(z.get("event_score", 0)), reverse=True)[:3]
+
+    return jsonify(
+        success=True,
+        query=q,
+        stock_score=round(stock_score, 3),
+        items=enriched,
+        top_items=top_items,
+        debug=debug_log
+    )
+
+
+
+
 
 if __name__ == "__main__":
     with app.app_context():

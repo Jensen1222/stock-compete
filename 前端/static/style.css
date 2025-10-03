@@ -428,3 +428,5 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   text-align: center;       /* 下拉選單內容置中 */
   text-align-last: center; 
 }
+
+#aiInsightCard .top-item a:hover { filter: brightness(1.1); }

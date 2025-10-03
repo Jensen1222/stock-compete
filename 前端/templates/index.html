@@ -68,6 +68,20 @@
   <button id="evShowAllBtn" class="buy-btn" style="display:none">顯示全部</button>
 </div>
 
+<!-- 🧠 AI 洞察（新增） -->
+<div class="card" id="aiInsightCard" style="display:none">
+  <h2> AI 洞察</h2>
+  <div class="score-wrap" style="display:flex;align-items:center;gap:12px;">
+    <div class="score-bar" style="flex:1;height:10px;background:#1f2937;border-radius:999px;overflow:hidden;">
+      <span id="score-fill" style="display:block;height:100%;width:0%;background:linear-gradient(90deg,#ef4444,#22c55e);"></span>
+    </div>
+    <div class="score-text" style="min-width:120px;color:#cbd5e1;">
+      <strong>Score：</strong><span id="score-val">0.00</span>
+    </div>
+  </div>
+  <div id="insight-top" style="margin-top:10px;display:grid;gap:8px;"></div>
+  <div id="insight-note" style="margin-top:10px;color:#94a3b8;font-size:.95rem;"></div>
+</div>
 
 
 <!-- 整股交易區 -->

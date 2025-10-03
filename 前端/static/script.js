@@ -405,3 +405,73 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+
+// ---------------- (ADD) AI Insight Card ----------------
+function aiEscape(s){
+  if (typeof s !== 'string') return '';
+  return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+          .replaceAll('"','&quot;').replaceAll("'",'&#39;');
+}
+
+async function loadInsightAddon(query){
+  const hoursSel = document.getElementById('evHours');
+  const hours = hoursSel?.value || 48;
+
+  const card = document.getElementById('aiInsightCard');
+  const topBox = document.getElementById('insight-top');
+  const note = document.getElementById('insight-note');
+  const scoreVal = document.getElementById('score-val');
+  const scoreFill = document.getElementById('score-fill');
+
+  if (!card) return;
+  card.style.display = 'block';
+  topBox.innerHTML = '<div class="top-item">分析中…</div>';
+  note.textContent = '';
+
+  try {
+    const res = await fetch(`/api/ai/insight?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || '分析失敗');
+
+    const s = Number(data.stock_score || 0);
+    scoreVal.textContent = s.toFixed(2);
+    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50)); // -5~+5 映射到 0~100%
+    scoreFill.style.width = pct + '%';
+
+    topBox.innerHTML = '';
+    (data.top_items || []).forEach((it, i) => {
+      const color = it.direction > 0 ? '#22c55e' : (it.direction < 0 ? '#ef4444' : '#9ca3af');
+      const el = document.createElement('div');
+      el.className = 'top-item';
+      el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
+      el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><strong>#${i+1}</strong> <span style="color:${color}">${it.direction>0?'偏多':it.direction<0?'偏空':'中性'}</span>
+          · 分數 <strong>${(it.event_score||0).toFixed(2)}</strong></div>
+          ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
+        </div>
+        <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
+        <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
+        <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
+      `;
+      topBox.appendChild(el);
+    });
+
+    note.textContent = '說明：Score 由方向×嚴重度×信心度聚合（-5 ~ +5）。Top 事件展示 AI 判斷與理由。';
+  } catch (e) {
+    topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察</div>';
+    note.textContent = String(e.message || e);
+  }
+}
+
+// **不更動你的既有邏輯**：另外新增一個監聽，把它「接在」查詢按下後
+window.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('evBtn');
+  const qEl = document.getElementById('evQuery');
+  if (btn && qEl) {
+    btn.addEventListener('click', () => {
+      const q = qEl.value?.trim();
+      if (q) loadInsightAddon(q);
+    });
+  }
+});
