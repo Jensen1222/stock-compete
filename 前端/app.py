@@ -1,49 +1,29 @@
+from flask import Flask, render_template, request, jsonify, redirect, url_for
+import requests
+from datetime import datetime
+import yfinance as yf
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, login_user, login_required, logout_user, current_user, UserMixin
+from werkzeug.security import generate_password_hash, check_password_hash
+from models import db, User, Trade, Result
+from flask_cors import CORS
+import openai
+from dotenv import load_dotenv
 import os
-import re
-import json
+from decimal import Decimal, ROUND_HALF_UP
+import pandas as pd
+from collections import defaultdict, deque
+from openai import OpenAI 
+from FinMind.data import DataLoader
+from flask import Response, stream_with_context
+from datetime import datetime, timedelta
 import math
 import time
-import xml.etree.ElementTree as ET
-from collections import defaultdict, deque
-from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
-from email.utils import parsedate_to_datetime
-from functools import lru_cache
-from statistics import median
-from typing import Optional
+import html as py_html
 from urllib.parse import quote_plus
-import html as py_html  # 保留你原本使用的別名
-
-import requests
-import pandas as pd
-import yfinance as yf
-from dotenv import load_dotenv
-from flask import (
-    Flask,
-    render_template,
-    request,
-    jsonify,
-    redirect,
-    url_for,
-    Response,
-    stream_with_context,
-)
-from flask_cors import CORS
-from flask_login import (
-    LoginManager,
-    login_user,
-    login_required,
-    logout_user,
-    current_user,
-    UserMixin,
-)
-from flask_sqlalchemy import SQLAlchemy  # 你雖然用 models.db，但保留沒關係
-from werkzeug.security import generate_password_hash, check_password_hash
-from openai import OpenAI
-import openai
-from FinMind.data import DataLoader
-from models import db, User, Trade, Result
-
+import xml.etree.ElementTree as ET
+from typing import Optional
+from email.utils import parsedate_to_datetime
 
 # 載入 .env 檔案
 load_dotenv()
@@ -975,232 +955,117 @@ def api_events():
     )
 
 
-# =====================================================
-# 🧠 AI Insight：事件分析 + 串流版（整合完成）
-# =====================================================
+# --------------------(ADD) AI Insight Helpers --------------------
+AI_PROMPT_MINI = (
+    "你是金融事件分析助手。請針對輸入的一則中文新聞或公告，僅回傳 JSON：\n"
+    "{\n"
+    "  \"direction\": -1 | 0 | 1,\n"
+    "  \"severity\": 1-5,\n"
+    "  \"horizon\": \"短\"|\"中\"|\"長\",\n"
+    "  \"confidence\": 0.0-1.0,\n"
+    "  \"why\": \"50字內重點原因\"\n"
+    "}\n"
+    "若無法判斷，direction=0、severity=1、confidence<=0.3。"
+)
 
-# ====== 速度優化與選取策略工具 ======
-from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from statistics import median
-import json, math, re
-from flask import Response, stream_with_context
+def _ai_rule_eval_basic(title: str) -> dict:
+    # 用你現有的風險關鍵詞打底，無金鑰或失敗時使用
+    risk = _label_risk(title or "")
+    if risk == "positive":
+        return {"direction": 1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏多關鍵詞"}
+    if risk == "negative":
+        return {"direction": -1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏空關鍵詞"}
+    return {"direction": 0, "severity": 1, "horizon": "短", "confidence": 0.3, "why": "資訊有限"}
 
-@lru_cache(maxsize=256)
-def _cached_ai_eval(text: str) -> dict:
-    return _ai_eval_one_event(text)
+def _ai_event_score(info: dict) -> float:
+    d = int(info.get("direction", 0))
+    sev = max(1, min(5, int(info.get("severity", 1))))
+    conf = max(0.0, min(1.0, float(info.get("confidence", 0.0))))
+    return d * sev * conf
 
-def _hours_ago(dt_str: str) -> float:
+def _ai_eval_one_event(text: str) -> dict:
+    # 有 OPENAI_API_KEY 才走 LLM，否則走規則
+    if not api_key:
+        return _ai_rule_eval_basic(text)
     try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": AI_PROMPT_MINI},
+                {"role": "user", "content": text[:1800]},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        msg = resp.choices[0].message
+        parsed = getattr(msg, "parsed", None) or getattr(msg, "content", None)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception as e:
+        print(f"[AI] error fallback: {e}")
+    return _ai_rule_eval_basic(text)
+
+# *共用* 事件收集器（直接重用你既有的 /api/events 資料結構）
+def _collect_events_for_ai(query: str, hours: int = 48, limit: int = 50):
+    # 這裡直接呼叫你現有的 /api/events 內部邏輯比較安全
+    # 為「純新增」，不去改舊函式；改用 requests loopback 呼叫自己的 API 也可，但本地內聯更穩
+    with app.test_request_context(f"/api/events?query={query}&hours={hours}&limit={limit}"):
+        resp = api_events()
+        # api_events() 回傳的是 Flask Response 或 tuple，統一讀 json
         try:
-            dt = datetime.fromisoformat(dt_str)
-        except:
-            from email.utils import parsedate_to_datetime
-            dt = parsedate_to_datetime(dt_str).astimezone(tz=None).replace(tzinfo=None)
-        return max((datetime.now() - dt).total_seconds() / 3600.0, 0.0)
-    except:
-        return 0.0
+            data = resp.get_json()
+        except AttributeError:
+            # 若是 (response, status) 形式
+            data = resp[0].get_json() if isinstance(resp, tuple) else {}
+    items = (data or {}).get("items", [])
+    debug = (data or {}).get("debug", [])
+    return items, debug
 
-def _time_decay(hours_ago: float, tau: float = 48.0) -> float:
-    return math.exp(-float(hours_ago) / tau)
-
-def _norm_title(t: str) -> str:
-    t = (t or "").lower()
-    t = re.sub(r"[^\w\s\u4e00-\u9fff]", " ", t)
-    return re.sub(r"\s+", " ", t).strip()
-
-def _jaccard(a: str, b: str) -> float:
-    sa, sb = set(_norm_title(a).split()), set(_norm_title(b).split())
-    if not sa or not sb: return 0.0
-    return len(sa & sb) / len(sa | sb)
-
-def _pick_diverse(items: list, k: int = 3, same_src_limit: int = 1,
-                  lambda_div: float = 0.6, sim_th: float = 0.6):
-    chosen, src_cnt = [], {}
-    cand = sorted(items, key=lambda x: x['base_score'], reverse=True)
-    while cand and len(chosen) < k:
-      best_i, best_val = -1, -1e9
-      for idx, it in enumerate(cand):
-        src = (it.get("source") or "").strip().lower()
-        if src_cnt.get(src, 0) >= same_src_limit:
-          continue
-        max_sim = max((_jaccard(it['title'], c['title']) for c in chosen), default=0.0)
-        if max_sim >= sim_th:
-          continue
-        mmr = it['base_score'] - lambda_div * max_sim
-        if mmr > best_val:
-          best_val, best_i = mmr, idx
-      if best_i < 0: break
-      pick = cand.pop(best_i)
-      s = (pick.get("source") or "").strip().lower()
-      src_cnt[s] = src_cnt.get(s, 0) + 1
-      chosen.append(pick)
-    return chosen
-
-
-# =====================================================
-# /api/ai/insight（主分析端點）
-# =====================================================
+# --------------------(ADD) AI Insight Endpoint --------------------
 @app.get("/api/ai/insight")
 @login_required
 def api_ai_insight_addon():
+    """
+    純新增端點，不動原有 /api/events
+    用既有事件資料，逐則做 AI 評分並聚合：
+    GET /api/ai/insight?query=2330&hours=48&limit=50
+    """
     q = request.args.get("query", "").strip()
     hours = int(request.args.get("hours", "48"))
     limit = int(request.args.get("limit", "50"))
     if not q:
         return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
 
-    items, debug_log = _collect_events_for_ai(q, hours=hours, limit=min(limit, 50))
-    if not items:
-        return jsonify(success=True, query=q, stock_score=0.0, items=[], top_items=[], risk_temp=0.0, uncertainty=1.0, n_events=0, debug=debug_log)
+    items, debug_log = _collect_events_for_ai(q, hours=hours, limit=limit)
 
-    N = min(30, len(items))
-    analyzed = []
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        future_map = {}
-        for ev in items[:N]:
-            text = f"{ev.get('title','')}（來源:{ev.get('source','')} 時間:{ev.get('time','')}）"
-            future_map[ex.submit(_cached_ai_eval, text)] = ev
+    enriched = []
+    for ev in items:
+        text = f"{ev.get('title','')}（來源:{ev.get('source','')} 時間:{ev.get('time','')}）"
+        info = _ai_eval_one_event(text)
+        ev_score = _ai_event_score(info)
+        enriched.append({**ev, **info, "event_score": ev_score})
 
-        for fut in as_completed(future_map):
-            ev = future_map[fut]
-            try:
-                info = fut.result()
-            except Exception:
-                info = _ai_rule_eval_basic(ev.get('title',''))
-            ev_score = _ai_event_score(info)
-            analyzed.append({**ev, **info, "event_score": ev_score})
+    if not enriched:
+        return jsonify(success=True, query=q, stock_score=0.0, items=[], top_items=[], debug=debug_log)
 
-    for ev in items[N:]:
-        analyzed.append({**ev, "direction": 0, "severity": 1, "confidence": 0.2, "horizon": "短", "why": "未納入AI評分（為了速度）", "event_score": 0.0})
+    # 聚合（|event_score| 當權重）
+    num = den = 0.0
+    for x in enriched:
+        w = max(0.1, abs(x["event_score"]))
+        num += x["event_score"] * w
+        den += w
+    stock_score = num / den if den > 0 else 0.0
 
-    for ev in analyzed:
-        age_h = _hours_ago(ev.get("time", ""))
-        decay = _time_decay(age_h)
-        conf = float(ev.get("confidence", 0.5))
-        ev["_base_score"] = abs(float(ev.get("event_score", 0.0))) * decay * (0.6 + 0.4 * conf)
-
-    scores = sorted([float(x["event_score"]) for x in analyzed])
-    n = len(scores)
-    if n >= 5:
-        cut = max(1, int(n * 0.15))
-        trimmed = scores[cut:-cut] if (n - 2 * cut) >= 1 else scores
-    else:
-        trimmed = scores
-    stock_score = sum(trimmed) / len(trimmed) if trimmed else 0.0
-
-    avg_conf = sum(float(x.get("confidence", 0.5)) for x in analyzed) / max(len(analyzed), 1)
-    dispersion = (median(abs(s - stock_score) for s in scores) if scores else 0.0)
-    uncertainty = min(1.0, (1.0 - avg_conf) * (1.0 + min(abs(dispersion) / 3.0, 1.0)))
-    risk_temp = sum(abs(float(x["event_score"])) for x in analyzed if float(x["event_score"]) < 0)
-
-    pos = [{**e, "base_score": e["_base_score"]} for e in analyzed if int(e.get("direction", 0)) > 0]
-    neg = [{**e, "base_score": e["_base_score"]} for e in analyzed if int(e.get("direction", 0)) < 0]
-    latest = sorted(analyzed, key=lambda x: x.get("time", ""), reverse=True)[:1]
-    top_items = (_pick_diverse(pos, k=2) + _pick_diverse(neg, k=2) + latest)[:5]
+    top_items = sorted(enriched, key=lambda z: abs(z.get("event_score", 0)), reverse=True)[:3]
 
     return jsonify(
         success=True,
         query=q,
         stock_score=round(stock_score, 3),
-        items=analyzed,
+        items=enriched,
         top_items=top_items,
-        risk_temp=round(risk_temp, 2),
-        uncertainty=round(uncertainty, 2),
-        n_events=len(analyzed),
         debug=debug_log
     )
-
-
-# =====================================================
-# /api/ai/insight/stream（串流版）
-# =====================================================
-def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-@app.get("/api/ai/insight/stream")
-@login_required
-def api_ai_insight_stream():
-    q = request.args.get("query", "").strip()
-    hours = int(request.args.get("hours", "48"))
-    limit = int(request.args.get("limit", "50"))
-    if not q:
-        return jsonify(success=False, message="缺少 query"), 400
-
-    def gen():
-        items, _ = _collect_events_for_ai(q, hours=hours, limit=min(limit, 50))
-        yield _sse("events", {"count": len(items)})
-
-        if not items:
-            yield _sse("summary", {"success": True, "stock_score": 0.0, "top_items": [], "uncertainty": 1.0, "risk_temp": 0.0, "n_events": 0})
-            yield _sse("done", {})
-            return
-
-        yield _sse("list", {"items": items[:min(10, len(items))]})
-
-        N = min(30, len(items))
-        analyzed = []
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            future_map = {}
-            for idx, ev in enumerate(items[:N]):
-                text = f"{ev.get('title','')}（來源:{ev.get('source','')} 時間:{ev.get('time','')}）"
-                future_map[ex.submit(_cached_ai_eval, text)] = (idx, ev)
-
-            for fut in as_completed(future_map):
-                idx, ev = future_map[fut]
-                try:
-                    info = fut.result()
-                except Exception:
-                    info = _ai_rule_eval_basic(ev.get('title',''))
-                ev_score = _ai_event_score(info)
-                enr = {**ev, **info, "event_score": ev_score}
-                analyzed.append(enr)
-                yield _sse("item", {"index": idx, "item": enr})
-
-        for ev in items[N:]:
-            analyzed.append({**ev, "direction": 0, "severity": 1, "confidence": 0.2, "horizon": "短", "why": "未納入AI評分（速度優化）", "event_score": 0.0})
-
-        for ev in analyzed:
-            age = _hours_ago(ev.get("time", ""))
-            decay = _time_decay(age)
-            conf = float(ev.get("confidence", 0.5))
-            ev["_base_score"] = abs(float(ev.get("event_score", 0.0))) * decay * (0.6 + 0.4 * conf)
-
-        scores = sorted([float(x["event_score"]) for x in analyzed])
-        n = len(scores)
-        if n >= 5:
-            cut = max(1, int(n * 0.15))
-            trimmed = scores[cut:-cut] if (n - 2 * cut) >= 1 else scores
-        else:
-            trimmed = scores
-        stock_score = sum(trimmed) / len(trimmed) if trimmed else 0.0
-
-        avg_conf = sum(float(x.get("confidence", 0.5)) for x in analyzed) / max(len(analyzed), 1)
-        dispersion = (median(abs(s - stock_score) for s in scores) if scores else 0.0)
-        uncertainty = min(1.0, (1.0 - avg_conf) * (1.0 + min(abs(dispersion) / 3.0, 1.0)))
-        risk_temp = sum(abs(float(x["event_score"])) for x in analyzed if float(x["event_score"]) < 0)
-
-        pos = [{**e, "base_score": e["_base_score"]} for e in analyzed if int(e.get("direction", 0)) > 0]
-        neg = [{**e, "base_score": e["_base_score"]} for e in analyzed if int(e.get("direction", 0)) < 0]
-        latest = sorted(analyzed, key=lambda x: x.get("time", ""), reverse=True)[:1]
-        top_items = (_pick_diverse(pos, k=2) + _pick_diverse(neg, k=2) + latest)[:5]
-
-        yield _sse("summary", {
-            "success": True,
-            "query": q,
-            "stock_score": round(stock_score, 3),
-            "uncertainty": round(uncertainty, 2),
-            "risk_temp": round(risk_temp, 2),
-            "n_events": len(analyzed),
-            "top_items": top_items
-        })
-        yield _sse("done", {})
-
-    resp = Response(stream_with_context(gen()), mimetype="text/event-stream")
-    resp.headers["Cache-Control"] = "no-cache"
-    resp.headers["X-Accel-Buffering"] = "no"
-    return resp
-
 
 
 
@@ -1212,4 +1077,3 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 8000))  # Railway 會自動設定 PORT 環境變數
     app.run(host="0.0.0.0", port=port, debug=True)  # 允許外部訪問
-
