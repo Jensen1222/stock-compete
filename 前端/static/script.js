@@ -406,14 +406,24 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-// ---------------- (ADD) AI Insight Card ----------------
+/* =======================
+   🧠 AI Insight Frontend (Full)
+   - Streaming (SSE) + Fallback
+   - Score -> Label + Advice
+   - Top events rendering
+   ======================= */
+
+// 安全轉義
 function aiEscape(s){
   if (typeof s !== 'string') return '';
-  return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
-          .replaceAll('"','&quot;').replaceAll("'",'&#39;');
+  return s.replaceAll('&','&amp;')
+          .replaceAll('<','&lt;')
+          .replaceAll('>','&gt;')
+          .replaceAll('"','&quot;')
+          .replaceAll("'",'&#39;');
 }
 
-// 分數翻譯成氛圍 & 建議
+// Score -> 標籤 & 建議（文字）
 function scoreToLabelAndAdvice(s){
   if (s >= 2.0)  return {label:'偏多',     advice:'可加碼或分批佈局'};
   if (s >= 0.8)  return {label:'偏正面',   advice:'觀望或小倉位'};
@@ -422,6 +432,42 @@ function scoreToLabelAndAdvice(s){
   return                {label:'偏空',     advice:'嚴設停損、降低曝險'};
 }
 
+// 行動門檻（更務實：分數不足或不確定性高 → 觀望）
+function actionAdvice(score, uncertainty){
+  if (Math.abs(score) < 1.8 || (uncertainty ?? 1) > 0.4) {
+    return '觀望（訊號不足或不確定性偏高）';
+  }
+  return score > 0
+    ? '偏多：可小部位試單或逢回加碼'
+    : '偏空：降低曝險、逢反彈減碼';
+}
+
+// 渲染 Top 列表
+function renderTopList(container, items){
+  container.innerHTML = '';
+  (items || []).forEach((it, i) => {
+    const color = it.direction > 0 ? '#22c55e' : (it.direction < 0 ? '#ef4444' : '#9ca3af');
+    const evSa = scoreToLabelAndAdvice(Number(it.event_score||0));
+    const el = document.createElement('div');
+    el.className = 'top-item';
+    el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div><strong>#${i+1}</strong>
+          <span style="color:${color}">市場氛圍：${evSa.label}</span> ·
+          <span>影響指數 ${(it.event_score>=0?'+':'')+(Number(it.event_score||0)).toFixed(2)}</span>
+        </div>
+        ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
+      </div>
+      <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
+      <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
+      <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
+    `;
+    container.appendChild(el);
+  });
+}
+
+// 非串流（完整算完再顯示）
 async function loadInsightAddon(query){
   const hoursSel = document.getElementById('evHours');
   const hours = hoursSel?.value || 48;
@@ -435,7 +481,12 @@ async function loadInsightAddon(query){
 
   if (!card) return;
   card.style.display = 'block';
-  topBox.innerHTML = '<div class="top-item">分析中…</div>';
+  topBox.innerHTML = `
+    <div class="top-item" style="text-align:center;color:#94a3b8;">
+      <div class="loader" style="border:3px solid #1f2937;border-top:3px solid #93c5fd;border-radius:50%;
+        width:24px;height:24px;margin:8px auto;animation:spin .8s linear infinite;"></div>
+      <p>AI 分析中…</p>
+    </div>`;
   note.textContent = '';
 
   try {
@@ -443,59 +494,135 @@ async function loadInsightAddon(query){
     const data = await res.json();
     if (!data.success) throw new Error(data.message || '分析失敗');
 
-    const s = Number(data.stock_score || 0);
+    const s = Number(data.stock_score ?? 0);
+    const riskTemp = Number(data.risk_temp ?? 0);
+    const uncertainty = Number(data.uncertainty ?? 1);
+    const nEvents = Number(data.n_events ?? (data.items?.length ?? 0));
 
-    // 更新分數 & 氛圍
+    // 分數 & 氛圍
     const sa = scoreToLabelAndAdvice(s);
     scoreVal.textContent = (s >= 0 ? '+' : '') + s.toFixed(2);
     scoreLabel.textContent = sa.label;
-    note.textContent = '建議：' + sa.advice;
-
-    // 分數條填充比例
-    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50)); // -5~+5 映射到 0~100%
+    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50));
     scoreFill.style.width = pct + '%';
 
-    // 渲染 Top 事件
-    topBox.innerHTML = '';
-    (data.top_items || []).forEach((it, i) => {
-      const color = it.direction > 0 ? '#22c55e' : (it.direction < 0 ? '#ef4444' : '#9ca3af');
-      const el = document.createElement('div');
-      el.className = 'top-item';
-      el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
-      const evSa = scoreToLabelAndAdvice(Number(it.event_score||0));
-      el.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div><strong>#${i+1}</strong>
-            <span style="color:${color}">市場氛圍：${evSa.label}</span> ·
-            <span>影響指數 ${(it.event_score>=0?'+':'')+(it.event_score||0).toFixed(2)}</span>
-          </div>
-          ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
-        </div>
-        <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
-        <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
-        <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
-      `;
-      topBox.appendChild(el);
-    });
+    // 建議 + 指標
+    const act = actionAdvice(s, uncertainty);
+    note.textContent = `建議：${act} · 風險溫度 ${riskTemp.toFixed(2)} · 不確定性 ${uncertainty.toFixed(2)} · 取樣 ${nEvents}`;
 
+    // Top 列表
+    renderTopList(topBox, data.top_items || []);
   } catch (e) {
     topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察</div>';
     note.textContent = String(e.message || e);
   }
 }
 
-// 綁定「查詢新聞」按鈕，順便觸發 AI 洞察
+// 串流（SSE，陸續跑出來）
+function loadInsightStream(query){
+  const hoursSel = document.getElementById('evHours');
+  const hours = hoursSel?.value || 48;
+
+  const card = document.getElementById('aiInsightCard');
+  const topBox = document.getElementById('insight-top');
+  const note = document.getElementById('insight-note');
+  const scoreVal = document.getElementById('score-val');
+  const scoreLabel = document.getElementById('score-label');
+  const scoreFill = document.getElementById('score-fill');
+
+  if (!card) return;
+  card.style.display = 'block';
+  topBox.innerHTML = `
+    <div class="top-item" style="text-align:center;color:#94a3b8;">
+      <div class="loader" style="border:3px solid #1f2937;border-top:3px solid #93c5fd;border-radius:50%;
+        width:24px;height:24px;margin:8px auto;animation:spin .8s linear infinite;"></div>
+      <p>AI 分析中，資料將陸續顯示…</p>
+    </div>`;
+  note.textContent = '';
+  scoreVal.textContent = '+0.00'; scoreLabel.textContent = '中性'; scoreFill.style.width = '50%';
+
+  // 不支援 SSE 時，退回非串流
+  if (!('EventSource' in window)){
+    loadInsightAddon(query);
+    return;
+  }
+
+  const es = new EventSource(`/api/ai/insight/stream?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}`);
+
+  const enriched = [];
+  es.addEventListener('events', (e) => {
+    // 可用來顯示共幾則：JSON.parse(e.data).count
+  });
+
+  es.addEventListener('list', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      const starters = (data.items || []).map(x => ({...x, direction:0, severity:1, confidence:0.2, why:'載入中', event_score:0}));
+      renderTopList(topBox, starters);
+    } catch {}
+  });
+
+  es.addEventListener('item', (e) => {
+    const data = JSON.parse(e.data);
+    enriched.push(data.item);
+
+    // 即時估算總分（暫時），真正最終值以 summary 為準
+    const s = enriched.reduce((a,b)=>a+Number(b.event_score||0),0)/enriched.length;
+    const sa = scoreToLabelAndAdvice(s);
+    scoreVal.textContent = (s>=0?'+':'') + s.toFixed(2);
+    scoreLabel.textContent = sa.label;
+    const pct = Math.max(0, Math.min(100, 50 + (s/5)*50));
+    scoreFill.style.width = pct + '%';
+
+    // 先顯示已完成的前幾筆
+    renderTopList(topBox, enriched.slice(0,3));
+  });
+
+  es.addEventListener('summary', (e) => {
+    const data = JSON.parse(e.data);
+    const s = Number(data.stock_score || 0);
+    const sa = scoreToLabelAndAdvice(s);
+    scoreVal.textContent = (s>=0?'+':'') + s.toFixed(2);
+    scoreLabel.textContent = sa.label;
+    const pct = Math.max(0, Math.min(100, 50 + (s/5)*50));
+    scoreFill.style.width = pct + '%';
+
+    const act = actionAdvice(s, Number(data.uncertainty||0));
+    const riskTemp = Number(data.risk_temp||0);
+    note.textContent = `建議：${act} · 風險溫度 ${riskTemp.toFixed(2)} · 不確定性 ${(data.uncertainty||0).toFixed(2)} · 取樣 ${data.n_events||enriched.length}`;
+
+    // 最終 Top 列表
+    renderTopList(topBox, data.top_items || []);
+  });
+
+  es.addEventListener('done', () => es.close());
+
+  es.onerror = () => {
+    es.close();
+    // 串流失敗 → 退回非串流
+    loadInsightAddon(query);
+  };
+}
+
+// 綁定「查詢新聞」按鈕，同時觸發 AI 洞察（優先用串流）
 window.addEventListener('DOMContentLoaded', () => {
+  // 轉圈動畫 keyframes
+  const styleSpin = document.createElement('style');
+  styleSpin.textContent = '@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}';
+  document.head.appendChild(styleSpin);
+
   const btn = document.getElementById('evBtn');
   const qEl = document.getElementById('evQuery');
   if (btn && qEl) {
     btn.addEventListener('click', () => {
       const q = qEl.value?.trim();
-      if (q) loadInsightAddon(q);
+      if (!q) return;
+      // 若你還沒上 /api/ai/insight/stream，可以改成 loadInsightAddon(q)
+      loadInsightStream(q);
     });
   }
 
-  // ℹ️ 說明按鈕開關
+  // ℹ️ 說明開關
   const toggleBtn = document.getElementById('insight-help-toggle');
   const ruleBox = document.getElementById('insight-rules');
   if (toggleBtn && ruleBox){
@@ -504,3 +631,4 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
