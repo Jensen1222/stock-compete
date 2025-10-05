@@ -429,24 +429,24 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   text-align-last: center; 
 }
 
-/* === 🧠 AI 洞察卡片樣式 === */
-#aiInsightCard .top-item {
-  transition: background 0.2s ease;
+/* === AI 洞察卡片樣式 === */
+#aiInsightCard .top-item { 
+  transition: background .2s ease; 
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+}
+#aiInsightCard .top-item:hover { 
+  background: rgba(148,163,184,.08); 
+}
+#aiInsightCard .top-item a { 
+  color:#93c5fd; 
+  text-decoration:none; 
+  transition:all .2s; 
+}
+#aiInsightCard .top-item a:hover { 
+  filter:brightness(1.2); 
+  text-decoration:underline; 
 }
 
-#aiInsightCard .top-item:hover {
-  background: rgba(148, 163, 184, 0.08);
-}
-
-/* 連結樣式 */
-#aiInsightCard .top-item a {
-  color: #93c5fd;
-  text-decoration: none;
-  transition: all 0.2s ease;
-}
-
-#aiInsightCard .top-item a:hover {
-  filter: brightness(1.2);
-  text-decoration: underline;
-}
 

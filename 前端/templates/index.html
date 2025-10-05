@@ -68,7 +68,7 @@
   <button id="evShowAllBtn" class="buy-btn" style="display:none">顯示全部</button>
 </div>
 
-<!-- 🧠 AI 洞察（改良版） -->
+<!-- 🧠 AI 洞察（改良後最終版） -->
 <div class="card" id="aiInsightCard" style="display:none">
   <h2>AI 洞察</h2>
 
@@ -89,13 +89,21 @@
   <!-- AI 建議 -->
   <div id="insight-note" style="margin-top:10px;color:#94a3b8;font-size:.95rem;"></div>
 
-  <!-- ℹ️ 說明按鈕 -->
+  <!-- ℹ️ 說明按鈕與說明框 -->
   <div id="insight-help" style="margin-top:10px;">
-    <button id="insight-help-toggle" class="chip" 
+    <button id="insight-help-toggle" class="chip"
       style="background:#0b1220;border:1px solid #334155;color:#cbd5e1;cursor:pointer;">
       ℹ️ 說明
     </button>
+    <div id="insight-rules" style="display:none;margin-top:10px;color:#94a3b8;font-size:0.9rem;line-height:1.5;">
+      <strong>說明：</strong><br>
+      - 分析來自近期新聞與公告。<br>
+      - 影響指數範圍為 -5 至 +5，分數越高代表偏多氣氛。<br>
+      - 分數考量方向 × 嚴重度 × 信心度。<br>
+      - AI 僅供參考，請勿作為投資建議。
+    </div>
   </div>
+</div>
 
   <!-- 規則說明（預設隱藏） -->
   <div id="insight-rules" 
