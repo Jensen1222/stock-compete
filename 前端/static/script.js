@@ -411,14 +411,11 @@ function escapeHtml(s) {
     .replaceAll("'", "&#39;");
 }
 
-// ---------------- (ADD) AI Insight Card ----------------
-function aiEscape(s){
-  if (typeof s !== 'string') return '';
-  return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
-          .replaceAll('"','&quot;').replaceAll("'",'&#39;');
-}
+/* =========================
+ *  AI 洞察（SSE 串流版）
+ * ========================= */
 
-// 分數翻譯成氛圍 & 建議
+/** 分數 → 標籤與建議 */
 function scoreToLabelAndAdvice(s){
   if (s >= 2.0)  return {label:'偏多',     advice:'可加碼或分批佈局'};
   if (s >= 0.8)  return {label:'偏正面',   advice:'觀望或小倉位'};
@@ -427,15 +424,26 @@ function scoreToLabelAndAdvice(s){
   return                {label:'偏空',     advice:'嚴設停損、降低曝險'};
 }
 
-async function loadInsightAddon(query){
-  const hoursSel = document.getElementById('evHours');
-  const hours = hoursSel?.value || 48;
+/** 安全轉義（AI 卡片文案） */
+function aiEscape(s){
+  if (typeof s !== 'string') return '';
+  return s
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
+}
 
-  const card = document.getElementById('aiInsightCard');
-  const topBox = document.getElementById('insight-top');
-  const note = document.getElementById('insight-note');
-  const scoreVal = document.getElementById('score-val');
-  const scoreLabel = document.getElementById('score-label');
+/** 觸發 AI 洞察（SSE 邊算邊出） */
+async function loadInsightAddon(query){
+  const hours = document.getElementById('evHours')?.value || 48;
+
+  const card      = document.getElementById('aiInsightCard');
+  const topBox    = document.getElementById('insight-top');
+  const note      = document.getElementById('insight-note');
+  const scoreVal  = document.getElementById('score-val');
+  const scoreLbl  = document.getElementById('score-label');
   const scoreFill = document.getElementById('score-fill');
 
   if (!card) return;
@@ -443,101 +451,95 @@ async function loadInsightAddon(query){
   topBox.innerHTML = '<div class="top-item">分析中…</div>';
   note.textContent = '';
 
-  try {
-    const res = await fetch(
-      `/api/ai/insight?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}`,
-      { credentials: "include", headers: { "Accept": "application/json" } }
-    );
+  // 使用 SSE；後端需已開啟 /api/ai/insight/stream 並允許 credentials
+  const url = `/api/ai/insight/stream?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}&limit=20`;
+  const es  = new EventSource(url, { withCredentials: true });
 
-    // 401 未登入
-    if (res.status === 401) {
-      topBox.innerHTML = '<div class="top-item">⚠️ 請先登入帳號後再使用 AI 洞察功能。</div>';
-      note.textContent = '';
-      return;
-    }
+  let idx = 0;
+  topBox.innerHTML = '';
 
-    // 防止被導向 HTML
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (!ct.includes("application/json")) {
-      const text = await res.text();
-      topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察：伺服器回傳非 JSON，可能需要重新登入。</div>';
-      note.textContent = '';
-      console.warn("[/api/ai/insight non-json]", text.slice(0, 200));
-      return;
-    }
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
 
-    const data = await res.json();
-    if (!data.success) throw new Error(data.message || '分析失敗');
+      if (data.type === 'meta') {
+        // 可選：顯示總則數 data.total
+        return;
+      }
 
-    const s = Number(data.stock_score || 0);
+      if (data.type === 'item' || data.type === 'update') {
+        if (data.type === 'item') idx += 1;
+        const it = data.item;
+        const color = it.direction > 0 ? '#22c55e' : it.direction < 0 ? '#ef4444' : '#9ca3af';
+        const el = document.createElement('div');
+        el.className = 'top-item';
+        el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
+        const lab = scoreToLabelAndAdvice(Number(it.event_score||0)).label;
 
-    // 更新分數 & 氛圍
-    const sa = scoreToLabelAndAdvice(s);
-    scoreVal.textContent = (s >= 0 ? '+' : '') + s.toFixed(2);
-    scoreLabel.textContent = sa.label;
-    note.textContent = '建議：' + sa.advice;
-
-    // 分數條填充比例 (-5~+5 -> 0~100%)
-    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50));
-    scoreFill.style.width = pct + '%';
-
-    // 渲染 Top 事件
-    topBox.innerHTML = '';
-    (data.top_items || []).forEach((it, i) => {
-      const color = it.direction > 0 ? '#22c55e' : (it.direction < 0 ? '#ef4444' : '#9ca3af');
-      const el = document.createElement('div');
-      el.className = 'top-item';
-      el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
-      const evSa = scoreToLabelAndAdvice(Number(it.event_score||0));
-      el.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div><strong>#${i+1}</strong>
-            <span style="color:${color}">市場氛圍：${evSa.label}</span> ·
-            <span>影響指數 ${(it.event_score>=0?'+':'')+(it.event_score||0).toFixed(2)}</span>
+        el.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div><strong>#${idx}</strong>
+              <span style="color:${color}">市場氛圍：${lab}</span> ·
+              <span>影響指數 ${(it.event_score>=0?'+':'')+(it.event_score||0).toFixed(2)}</span>
+            </div>
+            ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
           </div>
-          ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
-        </div>
-        <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
-        <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
-        <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
-      `;
-      topBox.appendChild(el);
-    });
+          <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
+          <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
+          <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
+        `;
+        topBox.appendChild(el);
+        return;
+      }
 
-  } catch (e) {
-    topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察</div>';
-    note.textContent = String(e.message || e);
-  }
+      if (data.type === 'done') {
+        const s  = Number(data.stock_score || 0);
+        const sa = scoreToLabelAndAdvice(s);
+        scoreVal.textContent = (s >= 0 ? '+' : '') + s.toFixed(2);
+        scoreLbl.textContent = sa.label;
+        scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s / 5) * 50)) + '%';
+        note.textContent = '建議：' + sa.advice;
+        es.close();
+        return;
+      }
+    } catch (err) {
+      console.warn('[SSE parse error]', err);
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    note.textContent = '串流中斷或未登入，請重新查詢或先登入後再試';
+  };
 }
 
-// 綁定按鈕與 Enter 鍵 + 觸發 AI 洞察
-window.addEventListener("DOMContentLoaded", () => {
-  const btn = document.getElementById("evBtn");
-  const q = document.getElementById("evQuery");
+/** 綁定：用查詢按鈕/Enter 觸發 AI 洞察（不動你的新聞查詢程式） */
+window.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('evBtn');
+  const qEl = document.getElementById('evQuery');
+
   if (btn) {
-    btn.addEventListener("click", () => {
-      fetchEvents();
-      const query = q?.value?.trim();
-      if (query) loadInsightAddon(query);
+    btn.addEventListener('click', () => {
+      const q = qEl?.value?.trim();
+      if (q) loadInsightAddon(q);
     });
   }
-  if (q) {
-    if (!q.value) q.value = "2330"; // 預設台積電
-    q.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        fetchEvents();
-        const query = q?.value?.trim();
-        if (query) loadInsightAddon(query);
+  if (qEl) {
+    qEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const q = qEl.value?.trim();
+        if (q) loadInsightAddon(q);
       }
     });
   }
 
-  // ℹ️ 說明按鈕開關
+  // 說明開關（若你的 HTML 有這兩個節點）
   const toggleBtn = document.getElementById('insight-help-toggle');
-  const ruleBox = document.getElementById('insight-rules');
+  const ruleBox   = document.getElementById('insight-rules');
   if (toggleBtn && ruleBox){
     toggleBtn.addEventListener('click', () => {
-      ruleBox.style.display = (ruleBox.style.display === 'none' || !ruleBox.style.display) ? 'block' : 'none';
+      ruleBox.style.display =
+        (ruleBox.style.display === 'none' || !ruleBox.style.display) ? 'block' : 'none';
     });
   }
 });

@@ -24,6 +24,8 @@ from urllib.parse import quote_plus
 import xml.etree.ElementTree as ET
 from typing import Optional
 from email.utils import parsedate_to_datetime
+import json
+from concurrent.futures import ThreadPoolExecutor
 
 # 載入 .env 檔案
 load_dotenv()
@@ -969,7 +971,6 @@ AI_PROMPT_MINI = (
 )
 
 def _ai_rule_eval_basic(title: str) -> dict:
-    """無金鑰或 LLM 失敗時的規則回退。"""
     risk = _label_risk(title or "")
     if risk == "positive":
         return {"direction": 1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏多關鍵詞"}
@@ -978,29 +979,21 @@ def _ai_rule_eval_basic(title: str) -> dict:
     return {"direction": 0, "severity": 1, "horizon": "短", "confidence": 0.30, "why": "資訊有限"}
 
 def _ai_event_score(info: dict) -> float:
-    """事件分數：方向 × 嚴重度 × 信心度（-5 ~ +5）。"""
     d = int(info.get("direction", 0))
     sev = max(1, min(5, int(info.get("severity", 1))))
     conf = max(0.0, min(1.0, float(info.get("confidence", 0.0))))
     return float(d) * float(sev) * float(conf)
 
-def _safe_json_loads(s: str) -> Optional[dict]:
+def _safe_json_loads(s: str):
     try:
         return json.loads(s)
     except Exception:
         return None
 
 def _ai_eval_one_event(text: str) -> dict:
-    """
-    對單則事件做 AI 評估；有 OPENAI_API_KEY 時走 LLM，否則規則回退。
-    確保回傳欄位完整與型別合理。
-    """
-    # 無金鑰直接回退
     if not api_key:
         return _ai_rule_eval_basic(text)
-
     try:
-        # OpenAI 新版 SDK：回傳內容在 choices[0].message.content（字串）
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -1011,34 +1004,67 @@ def _ai_eval_one_event(text: str) -> dict:
             temperature=0.2,
             timeout=20,
         )
-        msg = resp.choices[0].message
-        raw = getattr(msg, "content", "") or ""
+        raw = getattr(resp.choices[0].message, "content", "") or ""
         parsed = _safe_json_loads(raw) if isinstance(raw, str) else None
-
         if isinstance(parsed, dict):
-            # 防呆：欄位/型別歸一
             out = {
                 "direction": int(parsed.get("direction", 0)),
-                "severity": int(parsed.get("severity", 1)),
+                "severity": max(1, min(5, int(parsed.get("severity", 1)))),
                 "horizon": str(parsed.get("horizon", "短"))[:2],
-                "confidence": float(parsed.get("confidence", 0.0)),
+                "confidence": max(0.0, min(1.0, float(parsed.get("confidence", 0.0)))),
                 "why": str(parsed.get("why", ""))[:100],
             }
-            # 邊界修正
             out["direction"] = -1 if out["direction"] < 0 else (1 if out["direction"] > 0 else 0)
-            out["severity"] = max(1, min(5, out["severity"]))
-            out["confidence"] = max(0.0, min(1.0, out["confidence"]))
             return out
     except Exception as e:
         print(f"[AI] error fallback: {e}")
-
-    # 任何失敗 → 規則回退
     return _ai_rule_eval_basic(text)
 
+def _ai_eval_batch(text_list: list[str]) -> list[dict]:
+    if not api_key or not text_list:
+        return [_ai_rule_eval_basic(t) for t in text_list]
+    try:
+        prompt = (
+            "你是金融事件分析助手。請針對輸入的多則中文新聞/公告，逐則回傳 JSON 陣列 items，"
+            "每個元素包含：direction(-1|0|1), severity(1-5), horizon(短|中|長), "
+            "confidence(0~1), why(<=50字)。僅輸出 JSON 物件，鍵為 items。"
+        )
+        joined = [{"id": i, "text": t[:1000]} for i, t in enumerate(text_list)]
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": json.dumps(joined, ensure_ascii=False)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            timeout=30,
+        )
+        raw = getattr(resp.choices[0].message, "content", "") or "{}"
+        obj = _safe_json_loads(raw) or {}
+        arr = obj.get("items")
+        if not isinstance(arr, list):
+            arr = obj if isinstance(obj, list) else None
+
+        out = []
+        for i, t in enumerate(text_list):
+            try:
+                d = arr[i] if (arr and i < len(arr)) else {}
+                out.append({
+                    "direction": int(d.get("direction", 0)),
+                    "severity": max(1, min(5, int(d.get("severity", 1)))),
+                    "horizon": str(d.get("horizon","短"))[:2],
+                    "confidence": max(0.0, min(1.0, float(d.get("confidence", 0.0)))),
+                    "why": str(d.get("why",""))[:100],
+                })
+            except Exception:
+                out.append(_ai_rule_eval_basic(t))
+        return out
+    except Exception as e:
+        print(f"[AI batch] error -> fallback single: {e}")
+        return [_ai_eval_one_event(t) for t in text_list]
+
 def _collect_events_for_ai(query: str, hours: int = 48, limit: int = 50):
-    """
-    重用 /api/events 的內部邏輯（不改舊函式）。
-    """
     try:
         with app.test_request_context(f"/api/events?query={query}&hours={hours}&limit={limit}"):
             resp = api_events()
@@ -1049,7 +1075,6 @@ def _collect_events_for_ai(query: str, hours: int = 48, limit: int = 50):
     except Exception as e:
         print(f"[_collect_events_for_ai] error: {e}")
         data = {}
-
     items = (data or {}).get("items", []) or []
     debug = (data or {}).get("debug", []) or []
     return items, debug
@@ -1058,121 +1083,135 @@ def _collect_events_for_ai(query: str, hours: int = 48, limit: int = 50):
 @app.get("/api/ai/insight")
 @login_required
 def api_ai_insight_addon():
-    """
-    用既有事件資料逐則做 AI 評分並聚合：
-    GET /api/ai/insight?query=2330&hours=48&limit=50
-    回傳：
-      success, query, stock_score, n_events, risk_temp, uncertainty,
-      items[...], top_items[...], debug[...]
-    """
     q = (request.args.get("query", "") or "").strip()
     hours = int(request.args.get("hours", "48") or 48)
-    limit = int(request.args.get("limit", "50") or 50)
-
+    limit = int(request.args.get("limit", "20") or 20)  # 預設 20，速度更快
     if not q:
         return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
 
-    # 1) 取事件
     items, debug_log = _collect_events_for_ai(q, hours=hours, limit=limit)
-
     if not items:
-        return jsonify(
-            success=True,
-            query=q,
-            stock_score=0.0,
-            n_events=0,
-            risk_temp=0.0,
-            uncertainty=1.0,
-            items=[],
-            top_items=[],
-            debug=debug_log
-        )
+        return jsonify(success=True, query=q, stock_score=0.0, n_events=0,
+                       risk_temp=0.0, uncertainty=1.0, items=[], top_items=[], debug=debug_log)
 
-    # 2) 併發評分（加速）
+    # 準備文字
+    texts = []
+    for ev in items:
+        title = str(ev.get("title") or "")
+        source = str(ev.get("source") or "")
+        tstamp = str(ev.get("time") or "")
+        texts.append(f"{title}（來源:{source} 時間:{tstamp}）")
+
+    # 規則先跑一輪，挑出需要 LLM 的
+    quick = [_ai_rule_eval_basic(t) for t in texts]
+    need_ai_idx = [i for i, info in enumerate(quick) if abs(_ai_event_score(info)) >= 1 or info["direction"] == 0]
+
+    # 批次送 LLM（每批 10）
+    batch_size = 10
+    for start in range(0, len(need_ai_idx), batch_size):
+        idxs = need_ai_idx[start:start+batch_size]
+        batch = [texts[i] for i in idxs]
+        results = _ai_eval_batch(batch)
+        for j, i in enumerate(idxs):
+            quick[i] = results[j]
+
+    # enriched
     enriched = []
-    try:
-        max_workers = min(6, max(1, os.cpu_count() or 2))
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            futures = []
-            for ev in items:
-                title = str(ev.get("title") or "")
-                source = str(ev.get("source") or "")
-                tstamp = str(ev.get("time") or "")
-                text = f"{title}（來源:{source} 時間:{tstamp}）"
-                futures.append(ex.submit(_ai_eval_one_event, text))
+    for ev, info in zip(items, quick):
+        ev_score = _ai_event_score(info)
+        enriched.append({**ev, **info, "event_score": ev_score})
 
-            for ev, fut in zip(items, futures):
-                info = {}
-                try:
-                    info = fut.result(timeout=25)
-                except Exception as e:
-                    print(f"[AI/future] {e}")
-                    info = _ai_rule_eval_basic(ev.get("title", ""))
-                ev_score = _ai_event_score(info)
-                enriched.append({**ev, **info, "event_score": ev_score})
-    except Exception as e:
-        print(f"[AI/enrich] {e}")
-        # 退化：逐一
-        enriched = []
-        for ev in items:
-            text = f"{ev.get('title','')}（來源:{ev.get('source','')} 時間:{ev.get('time','')}）"
-            info = _ai_eval_one_event(text)
-            ev_score = _ai_event_score(info)
-            enriched.append({**ev, **info, "event_score": ev_score})
-
-    if not enriched:
-        return jsonify(
-            success=True,
-            query=q,
-            stock_score=0.0,
-            n_events=0,
-            risk_temp=0.0,
-            uncertainty=1.0,
-            items=[],
-            top_items=[],
-            debug=debug_log
-        )
-
-    # 3) 聚合：以 |event_score| 當權重的加權平均，抑制極端值
+    # 聚合
     num = den = 0.0
-    confs = []
-    sevs = []
+    confs, sevs = [], []
     for x in enriched:
-        w = max(0.1, min(5.0, abs(float(x.get("event_score", 0.0)))))
-        num += float(x.get("event_score", 0.0)) * w
+        w = max(0.1, min(5.0, abs(x["event_score"])))
+        num += x["event_score"] * w
         den += w
         confs.append(max(0.0, min(1.0, float(x.get("confidence", 0.0)))))
         sevs.append(max(1, min(5, int(x.get("severity", 1)))))
 
     stock_score = (num / den) if den > 0 else 0.0
-    # 風險溫度（0~1）：嚴重度平均歸一
     risk_temp = (sum(sevs) / len(sevs) / 5.0) if sevs else 0.0
-    # 不確定性（0~1）：1 - 平均信心
     uncertainty = 1.0 - (sum(confs) / len(confs) if confs else 0.0)
 
-    # 4) Top 事件：同時保留正向/負向的代表，避免只看到「好的」
-    sorted_all = sorted(enriched, key=lambda z: abs(z.get("event_score", 0.0)), reverse=True)
-    top_pos = next((x for x in sorted_all if x.get("event_score", 0.0) > 0), None)
-    top_neg = next((x for x in sorted_all if x.get("event_score", 0.0) < 0), None)
-    # 第三個取整體次高（排除已選）
-    chosen_ids = set()
-    if top_pos: chosen_ids.add(id(top_pos))
-    if top_neg: chosen_ids.add(id(top_neg))
-    top_third = next((x for x in sorted_all if id(x) not in chosen_ids), None)
-
+    # Top：正向/負向/次高
+    sorted_all = sorted(enriched, key=lambda z: abs(z["event_score"]), reverse=True)
+    top_pos = next((x for x in sorted_all if x["event_score"] > 0), None)
+    top_neg = next((x for x in sorted_all if x["event_score"] < 0), None)
+    chosen = {id(x) for x in [top_pos, top_neg] if x}
+    top_third = next((x for x in sorted_all if id(x) not in chosen), None)
     top_items = [x for x in [top_pos, top_neg, top_third] if x is not None]
 
     return jsonify(
         success=True,
         query=q,
-        stock_score=round(float(stock_score), 3),
+        stock_score=round(stock_score, 3),
         n_events=len(enriched),
-        risk_temp=round(float(risk_temp), 3),
-        uncertainty=round(float(uncertainty), 3),
-        items=enriched,          # 全量（前端可不用一次全顯示）
-        top_items=top_items,     # 精選 2~3 條（含正/負各一）
+        risk_temp=round(risk_temp, 3),
+        uncertainty=round(uncertainty, 3),
+        items=enriched,
+        top_items=top_items,
         debug=debug_log
     )
+
+# --------------------(ADD) Streaming (SSE) --------------------
+@app.get("/api/ai/insight/stream")
+@login_required
+def api_ai_insight_stream():
+    q = (request.args.get("query","") or "").strip()
+    hours = int(request.args.get("hours","48") or 48)
+    limit = int(request.args.get("limit","20") or 20)
+    if not q:
+        return jsonify(success=False, message="缺少 query"), 400
+
+    def gen():
+        items, debug_log = _collect_events_for_ai(q, hours=hours, limit=limit)
+        yield f"data: {json.dumps({'type':'meta','total':len(items)})}\n\n"
+        if not items:
+            yield f"data: {json.dumps({'type':'done','stock_score':0.0,'top_items':[]})}\n\n"
+            return
+
+        texts = []
+        for ev in items:
+            title = str(ev.get("title") or "")
+            source = str(ev.get("source") or "")
+            tstamp = str(ev.get("time") or "")
+            texts.append(f"{title}（來源:{source} 時間:{tstamp}）")
+
+        quick = [_ai_rule_eval_basic(t) for t in texts]
+        need_ai_idx = [i for i, info in enumerate(quick) if abs(_ai_event_score(info)) >= 1 or info["direction"] == 0]
+
+        # 先把規則計分丟給前端（先看到畫面）
+        for i, ev in enumerate(items):
+            info = quick[i]
+            payload = {**ev, **info, "event_score": _ai_event_score(info)}
+            yield f"data: {json.dumps({'type':'item','index':i,'item':payload})}\n\n"
+
+        # 再批次提升需要 LLM 的
+        batch_size = 10
+        for start in range(0, len(need_ai_idx), batch_size):
+            idxs = need_ai_idx[start:start+batch_size]
+            results = _ai_eval_batch([texts[i] for i in idxs])
+            for j, i in enumerate(idxs):
+                quick[i] = results[j]
+                ev = items[i]
+                payload = {**ev, **quick[i], "event_score": _ai_event_score(quick[i])}
+                yield f"data: {json.dumps({'type':'update','index':i,'item':payload})}\n\n"
+
+        # 結算
+        enriched = [{**ev, **info, "event_score": _ai_event_score(info)} for ev, info in zip(items, quick)]
+        num = den = 0.0
+        for x in enriched:
+            w = max(0.1, min(5.0, abs(x["event_score"])))
+            num += x["event_score"] * w
+            den += w
+        stock_score = (num/den) if den>0 else 0.0
+        top_items = sorted(enriched, key=lambda z: abs(z["event_score"]), reverse=True)[:3]
+        yield f"data: {json.dumps({'type':'done','stock_score':round(stock_score,3),'top_items':top_items})}\n\n"
+
+    return Response(stream_with_context(gen()), mimetype="text/event-stream")
+
 
 
 

@@ -479,3 +479,17 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   background: linear-gradient(90deg, #ef4444, #22c55e);
   transition: width 0.8s ease;
 }
+/* === AI 洞察卡片樣式 === */
+#aiInsightCard .top-item {
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  transition: background 0.2s ease;
+}
+#aiInsightCard .top-item:hover { background: rgba(148,163,184,0.08); }
+#aiInsightCard .top-item a { color:#93c5fd; text-decoration:none; transition:all .2s ease; }
+#aiInsightCard .top-item a:hover { filter:brightness(1.2); text-decoration:underline; }
+
+#aiInsightCard .score-wrap { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+#aiInsightCard .score-bar { flex:1; min-width:200px; height:10px; background:#1f2937; border-radius:999px; overflow:hidden; }
+#score-fill { display:block; height:100%; width:0%; background:linear-gradient(90deg,#ef4444,#22c55e); transition:width .8s ease; }
