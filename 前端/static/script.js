@@ -542,3 +542,11 @@ window.addEventListener("DOMContentLoaded", () => {
   if (q)   q.addEventListener("keydown", (e) => { if (e.key === "Enter") fetchNewsAI(false); });
   if (hoursSel) hoursSel.addEventListener("change", () => fetchNewsAI(false));
 });
+
+const res = await fetch(url);
+if (!res.ok) {
+  const text = await res.text();
+  console.error("news-ai-insight HTTP error:", res.status, text);
+  throw new Error("服務錯誤（" + res.status + "）");
+}
+const data = await res.json();

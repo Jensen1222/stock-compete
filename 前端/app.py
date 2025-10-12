@@ -1,6 +1,5 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import requests
-from datetime import datetime
 import yfinance as yf
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user, UserMixin
@@ -24,6 +23,10 @@ from urllib.parse import quote_plus
 import xml.etree.ElementTree as ET
 from typing import Optional
 from email.utils import parsedate_to_datetime
+
+
+
+
 
 # 載入 .env 檔案
 load_dotenv()
@@ -676,7 +679,6 @@ def ask_ai():
     return Response(stream_with_context(generate(user_input, mode)), mimetype="text/plain")
 
 
-# ===== 風險關鍵詞 =====
 NEGATIVE_KWS = ["停工","減產","虧損","調降評等","賣超","裁員","稅務","違規","罰款","火災","爆炸","停電","跳票","倒閉","減資","警示","處分","下修","解雇"]
 POSITIVE_KWS = ["擴產","上修","買超","得標","合作","併購","創高","創新","獲利成長","認購","回購","增資","漲停","利多","展望正面"]
 
@@ -694,7 +696,7 @@ def _maybe_get_name_by_code(q: str) -> Optional[str]:
             return str(row.iloc[0]["stock_name"])
     return None
 
-# ===== Google News RSS 備援（免安裝第三方套件） =====
+# ======================= Google News RSS 備援 =======================
 def _fetch_google_news_rss(keyword: str, hours: int = 48, limit: int = 50):
     """
     從 Google News RSS 抓關鍵字新聞（台灣／繁中）
@@ -702,9 +704,7 @@ def _fetch_google_news_rss(keyword: str, hours: int = 48, limit: int = 50):
     """
     base = "https://news.google.com/rss/search"
     url = f"{base}?q={quote_plus(keyword)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; NewsFetcher/1.0; +https://example.com)"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; NewsFetcher/1.0; +https://example.com)"}
     try:
         resp = requests.get(url, timeout=10, headers=headers)
         if resp.status_code != 200 or not resp.text:
@@ -719,22 +719,18 @@ def _fetch_google_news_rss(keyword: str, hours: int = 48, limit: int = 50):
         for item in channel.findall("item"):
             title_raw = (item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
-            # 優先 DC:date，其次 pubDate
             pub_date_str = (item.findtext("{http://purl.org/dc/elements/1.1/}date")
                             or item.findtext("pubDate") or "").strip()
 
-            # 解析時間（盡力而為）
-            keep = True
+            # 時間解析 + 視窗過濾
             try:
                 dt = parsedate_to_datetime(pub_date_str) if pub_date_str else None
                 if dt and dt.tzinfo:
                     dt = dt.astimezone(tz=None).replace(tzinfo=None)
                 if dt and dt < cutoff:
-                    keep = False
+                    continue
             except Exception:
                 pass
-            if not keep:
-                continue
 
             # 拆出來源：「標題 - 來源」格式常見
             source = ""
@@ -744,7 +740,6 @@ def _fetch_google_news_rss(keyword: str, hours: int = 48, limit: int = 50):
                 title = " - ".join(tparts).strip()
                 source = src.strip()
 
-            # 移除 HTML 實體
             title = py_html.unescape(title)
 
             out.append({
@@ -762,7 +757,7 @@ def _fetch_google_news_rss(keyword: str, hours: int = 48, limit: int = 50):
         print(f"[rss] fetch error: {e}")
         return []
 
-# ===== FinMind 抓新聞（多路徑嘗試） =====
+# ======================= FinMind：新聞 / 公告 多路徑 =======================
 def _try_fetch_news(code: Optional[str], keyword: Optional[str],
                     start_date: str, end_date: str, debug_log: list):
     import pandas as pd
@@ -786,7 +781,7 @@ def _try_fetch_news(code: Optional[str], keyword: Optional[str],
         except Exception as e:
             debug_log.append(f"news(keyword,start/end) error: {e}")
 
-    # 3) 單日掃描（近幾天逐日）
+    # 3) 近幾天逐日掃描
     try:
         days = 5
         for i in range(days):
@@ -808,7 +803,6 @@ def _try_fetch_news(code: Optional[str], keyword: Optional[str],
         return pd.concat(frames, ignore_index=True)
     return pd.DataFrame()
 
-# ===== FinMind 抓公告（多函式名容錯） =====
 def _try_fetch_ann(code: Optional[str], keyword: Optional[str],
                    start_date: str, end_date: str, debug_log: list):
     import pandas as pd
@@ -832,7 +826,7 @@ def _try_fetch_ann(code: Optional[str], keyword: Optional[str],
         except Exception as e:
             debug_log.append(f"{f.__name__}(start/end) error: {e}")
 
-    # 2) 單日掃描
+    # 2) 近幾天逐日掃描
     for f in funcs:
         try:
             days = 5
@@ -855,27 +849,172 @@ def _try_fetch_ann(code: Optional[str], keyword: Optional[str],
         return pd.concat(frames, ignore_index=True)
     return pd.DataFrame()
 
-# ==================== 共用：取得事件（沿用你原本邏輯，避免重工） ====================
+# ======================= 新：核心抓取邏輯（無 login，純資料） =======================
+def _fetch_events_core(q: str, hours: int = 48, limit: int = 50):
+    debug_log = []
+    is_code = q.isdigit()
+    code = q if is_code else None
+    keyword = _maybe_get_name_by_code(q) if is_code else q
+
+    since_dt = datetime.now() - timedelta(hours=hours)
+    start_date = since_dt.strftime("%Y-%m-%d")
+    end_date = datetime.now().strftime("%Y-%m-%d")
+
+    items = []
+
+    # ---- FinMind 新聞 ----
+    try:
+        df_news = _try_fetch_news(code, keyword, start_date, end_date, debug_log)
+        if df_news is not None and not df_news.empty:
+            for _, r in df_news.iterrows():
+                title = str(r.get("title") or r.get("news_title") or "")
+                src = str(r.get("source") or r.get("media") or "新聞")
+                url = str(r.get("url") or r.get("link") or "")
+                dt = str(r.get("date") or r.get("time") or end_date)
+                if dt >= start_date and title:
+                    items.append({
+                        "type": "news",
+                        "title": title,
+                        "source": src,
+                        "time": dt,
+                        "url": url,
+                        "risk": _label_risk(title),
+                    })
+        else:
+            debug_log.append("FinMind news empty")
+    except Exception as e:
+        debug_log.append(f"news total error: {e}")
+
+    # ---- FinMind 公告 ----
+    try:
+        df_ann = _try_fetch_ann(code, keyword, start_date, end_date, debug_log)
+        if df_ann is not None and not df_ann.empty:
+            for _, r in df_ann.iterrows():
+                title = str(r.get("title") or r.get("subject") or "")
+                url = str(r.get("url") or r.get("link") or "")
+                dt = str(r.get("date") or r.get("time") or end_date)
+                if dt >= start_date and title:
+                    items.append({
+                        "type": "announcement",
+                        "title": title,
+                        "source": "公開資訊觀測站",
+                        "time": dt,
+                        "url": url,
+                        "risk": _label_risk(title),
+                    })
+        else:
+            debug_log.append("FinMind announcements empty")
+    except Exception as e:
+        debug_log.append(f"ann total error: {e}")
+
+    # ---- FinMind 完全抓不到 → RSS 備援 ----
+    if not items:
+        rss_kw = (keyword or q).strip()
+        rss_items = _fetch_google_news_rss(rss_kw, hours=hours, limit=limit)
+        debug_log.append(f"RSS items: {len(rss_items)}")
+        items.extend(rss_items)
+
+    # ---- 去重 + 排序 ----
+    seen = set()
+    dedup = []
+    for it in items:
+        key = (it.get("title","").strip().lower(), (it.get("source","") or "").strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(it)
+
+    # FinMind 多為 YYYY-MM-DD；RSS 可能含時間字串，這裡仍用字串降序即可
+    dedup.sort(key=lambda x: x.get("time", ""), reverse=True)
+    return dedup[:limit], debug_log
+
+# ======================= /api/events（改用核心） =======================
+@app.get("/api/events")
+@login_required
+def api_events():
+    """
+    /api/events?query=2330&hours=48&limit=50
+    /api/events?query=台積電
+    FinMind 抓不到 → 自動用 Google News RSS 備援
+    """
+    q = request.args.get("query", "").strip()
+    hours = int(request.args.get("hours", "48"))
+    limit = int(request.args.get("limit", "50"))
+    if not q:
+        return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
+
+    items, debug_log = _fetch_events_core(q, hours=hours, limit=limit)
+    return jsonify(
+        success=True,
+        query=q,
+        items=items,
+        window_hours=hours,
+        debug=debug_log
+    )
+
+# ======================= 內部共用：不再繞 test_request_context =======================
 def _get_events_raw(query: str, hours: int = 48, limit: int = 50):
     """
     回傳 (items, debug_log)
-    items 結構與 /api/events 相同；若 FinMind 抓不到自動用 RSS。
+    直接走 _fetch_events_core，避免內部再呼叫帶有 @login_required 的 API。
     """
-    with app.test_request_context(f"/api/events?query={query}&hours={hours}&limit={limit}"):
-        resp = api_events()
-        try:
-            data = resp.get_json()
-        except AttributeError:
-            data = resp[0].get_json() if isinstance(resp, tuple) else {}
-    items = (data or {}).get("items", []) or []
-    debug = (data or {}).get("debug", []) or []
+    items, debug = _fetch_events_core(query, hours=hours, limit=limit)
     return items, debug
 
+# ======================= AI 小助手（沿用你原本設定） =======================
+AI_PROMPT_MINI = (
+    "你是金融事件分析助手。請針對輸入的一則中文新聞或公告，僅回傳 JSON：\n"
+    "{\n"
+    "  \"direction\": -1 | 0 | 1,\n"
+    "  \"severity\": 1-5,\n"
+    "  \"horizon\": \"短\"|\"中\"|\"長\",\n"
+    "  \"confidence\": 0.0-1.0,\n"
+    "  \"why\": \"50字內重點原因\"\n"
+    "}\n"
+    "若無法判斷，direction=0、severity=1、confidence<=0.3。"
+)
+
+def _ai_rule_eval_basic(title: str) -> dict:
+    risk = _label_risk(title or "")
+    if risk == "positive":
+        return {"direction": 1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏多關鍵詞"}
+    if risk == "negative":
+        return {"direction": -1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏空關鍵詞"}
+    return {"direction": 0, "severity": 1, "horizon": "短", "confidence": 0.3, "why": "資訊有限"}
+
+def _ai_event_score(info: dict) -> float:
+    d = int(info.get("direction", 0))
+    sev = max(1, min(5, int(info.get("severity", 1))))
+    conf = max(0.0, min(1.0, float(info.get("confidence", 0.0))))
+    return d * sev * conf
+
+def _ai_eval_one_event(text: str) -> dict:
+    # 有 OPENAI_API_KEY 才走 LLM，否則走規則
+    if not api_key:
+        return _ai_rule_eval_basic(text)
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": AI_PROMPT_MINI},
+                {"role": "user", "content": text[:1800]},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        msg = resp.choices[0].message
+        parsed = getattr(msg, "parsed", None) or getattr(msg, "content", None)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception as e:
+        print(f"[AI] error fallback: {e}")
+    return _ai_rule_eval_basic(text)
+
+# ======================= AI enrich 與分數聚合 =======================
 def _enrich_with_ai(items: list) -> tuple[list, float]:
     """
-    逐則評分並回傳 (enriched_items, stock_score)。
-    enriched_items 會多出：direction/severity/horizon/confidence/event_score。
-    stock_score 用 |event_score| 當權重做加權平均（你的既有邏輯）。
+    回傳 (enriched_items, stock_score)；每則事件多：direction/severity/horizon/confidence/event_score
+    stock_score 用 |event_score| 當權重做加權平均
     """
     enriched = []
     for ev in items:
@@ -896,19 +1035,17 @@ def _enrich_with_ai(items: list) -> tuple[list, float]:
 
     return enriched, round(stock_score, 3)
 
-# ==================== 新：單一路徑「新聞AI洞察」＋分頁 ====================
+# ======================= 單一路徑：新聞AI洞察 + 分頁 =======================
 @app.get("/api/news-ai-insight")
 @login_required
 def api_news_ai_insight():
     """
     統一後端 API：新聞AI洞察
-    例：
       /api/news-ai-insight?query=2330&hours=48&limit=5&offset=0
     回傳：
       - items：這一頁的事件（已含 AI 欄位）
       - total/offset/limit/has_more：分頁資訊
       - stock_score、top_items（取 |event_score| 最大的前 3）
-    前端做法：初次請求 limit=5、offset=0；按「顯示更多」時 offset += limit；「收起」就重設 offset=0。
     """
     q = request.args.get("query", "").strip()
     hours = int(request.args.get("hours", "48"))
@@ -918,17 +1055,17 @@ def api_news_ai_insight():
     if not q:
         return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
 
-    # 1) 先拿所有事件（依你原本 /api/events 的排序去重）
-    all_items, debug_log = _get_events_raw(q, hours=hours, limit=50 if limit < 50 else limit*4)
+    # 1) 取得全部事件
+    all_items, debug_log = _get_events_raw(q, hours=hours, limit=max(50, limit*4))
     total = len(all_items)
 
-    # 2) AI enrich（一次處理，再分頁切片 → 保證分頁穩定）
+    # 2) AI enrich 一次做完，再分頁切片（確保排序穩定）
     enriched_all, stock_score = _enrich_with_ai(all_items)
 
-    # 3) top_items（從全部 enriched 中取 |event_score| 最大的 3 個）
+    # 3) Top 3 by |event_score|
     top_items = sorted(enriched_all, key=lambda z: abs(z.get("event_score", 0)), reverse=True)[:3]
 
-    # 4) 分頁切片
+    # 4) 分頁
     page_items = enriched_all[offset: offset + limit]
     has_more = (offset + limit) < total
 
@@ -941,12 +1078,12 @@ def api_news_ai_insight():
         limit=limit,
         has_more=has_more,
         stock_score=stock_score,
-        items=page_items,   # 只回傳當頁，給前端顯示（預設 5 筆）
+        items=page_items,
         top_items=top_items,
         debug=debug_log
     )
 
-# ==================== 相容性：保留舊 API，但導向新概念 ====================
+# ======================= 相容路徑：/api/ai/insight =======================
 @app.get("/api/ai/insight")
 @login_required
 def api_ai_insight_compat():

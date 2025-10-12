@@ -419,7 +419,7 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
 }
 
 html, body{
-  background: var(--bg);
+  background: #0e1625; /* ← 改回原本底色（需要的話換成你的舊色碼） */
   color: #e5e7eb;
   margin: 0;
   padding: 0;
