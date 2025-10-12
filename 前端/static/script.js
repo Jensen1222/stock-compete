@@ -308,10 +308,29 @@ async function fetchEvents() {
   if (!q) return alert("請輸入代碼或關鍵字");
 
   list.innerHTML = `<li style="color:#94a3b8;">查詢中…</li>`;
-  btn && (btn.disabled = true);
+  if (btn) btn.disabled = true;
 
   try {
-    const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=${encodeURIComponent(hours)}&limit=50`);
+    const res = await fetch(
+      `/api/events?query=${encodeURIComponent(q)}&hours=${encodeURIComponent(hours)}&limit=50`,
+      { credentials: "include", headers: { "Accept": "application/json" } }
+    );
+
+    // 401 未登入
+    if (res.status === 401) {
+      list.innerHTML = `<li style="color:#fca5a5;">⚠️ 請先登入後再查詢新聞/公告</li>`;
+      return;
+    }
+
+    // 防止被導向 HTML
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      list.innerHTML = `<li style="color:#fca5a5;">⚠️ 伺服器回傳非 JSON，可能需要重新登入。</li>`;
+      console.warn("[/api/events non-json]", text.slice(0, 200));
+      return;
+    }
+
     const data = await res.json();
 
     // debug 輸出（若後端有回傳）
@@ -332,9 +351,9 @@ async function fetchEvents() {
     renderEventsOnceThenAll(data.items, list);
   } catch (err) {
     console.error("fetchEvents error", err);
-    list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤</li>`;
+    list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤：${String(err.message || err)}</li>`;
   } finally {
-    btn && (btn.disabled = false);
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -358,7 +377,6 @@ function renderEventsOnceThenAll(items, container) {
       btn.remove(); // 展開後隱藏按鈕
     };
 
-    // 用 <li> 包一層，和清單結構一致（若你用 <ul>/<ol>）
     const wrap = document.createElement("li");
     wrap.style.listStyle = "none";
     wrap.appendChild(btn);
@@ -393,19 +411,6 @@ function escapeHtml(s) {
     .replaceAll("'", "&#39;");
 }
 
-// 綁定按鈕與 Enter 鍵
-window.addEventListener("DOMContentLoaded", () => {
-  const btn = document.getElementById("evBtn");
-  const q = document.getElementById("evQuery");
-  if (btn) btn.addEventListener("click", fetchEvents);
-  if (q) {
-    if (!q.value) q.value = "2330"; // 預設台積電
-    q.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") fetchEvents();
-    });
-  }
-});
-
 // ---------------- (ADD) AI Insight Card ----------------
 function aiEscape(s){
   if (typeof s !== 'string') return '';
@@ -439,7 +444,28 @@ async function loadInsightAddon(query){
   note.textContent = '';
 
   try {
-    const res = await fetch(`/api/ai/insight?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}`);
+    const res = await fetch(
+      `/api/ai/insight?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}`,
+      { credentials: "include", headers: { "Accept": "application/json" } }
+    );
+
+    // 401 未登入
+    if (res.status === 401) {
+      topBox.innerHTML = '<div class="top-item">⚠️ 請先登入帳號後再使用 AI 洞察功能。</div>';
+      note.textContent = '';
+      return;
+    }
+
+    // 防止被導向 HTML
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察：伺服器回傳非 JSON，可能需要重新登入。</div>';
+      note.textContent = '';
+      console.warn("[/api/ai/insight non-json]", text.slice(0, 200));
+      return;
+    }
+
     const data = await res.json();
     if (!data.success) throw new Error(data.message || '分析失敗');
 
@@ -451,8 +477,8 @@ async function loadInsightAddon(query){
     scoreLabel.textContent = sa.label;
     note.textContent = '建議：' + sa.advice;
 
-    // 分數條填充比例
-    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50)); // -5~+5 映射到 0~100%
+    // 分數條填充比例 (-5~+5 -> 0~100%)
+    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50));
     scoreFill.style.width = pct + '%';
 
     // 渲染 Top 事件
@@ -484,14 +510,25 @@ async function loadInsightAddon(query){
   }
 }
 
-// 綁定「查詢新聞」按鈕，順便觸發 AI 洞察
-window.addEventListener('DOMContentLoaded', () => {
-  const btn = document.getElementById('evBtn');
-  const qEl = document.getElementById('evQuery');
-  if (btn && qEl) {
-    btn.addEventListener('click', () => {
-      const q = qEl.value?.trim();
-      if (q) loadInsightAddon(q);
+// 綁定按鈕與 Enter 鍵 + 觸發 AI 洞察
+window.addEventListener("DOMContentLoaded", () => {
+  const btn = document.getElementById("evBtn");
+  const q = document.getElementById("evQuery");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      fetchEvents();
+      const query = q?.value?.trim();
+      if (query) loadInsightAddon(query);
+    });
+  }
+  if (q) {
+    if (!q.value) q.value = "2330"; // 預設台積電
+    q.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        fetchEvents();
+        const query = q?.value?.trim();
+        if (query) loadInsightAddon(query);
+      }
     });
   }
 

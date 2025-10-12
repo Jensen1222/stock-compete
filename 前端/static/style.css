@@ -428,17 +428,54 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   text-align: center;       /* 下拉選單內容置中 */
   text-align-last: center; 
 }
+/* === AI 洞察卡片樣式（最終版）=== */
+#aiInsightCard .top-item {
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  transition: background 0.2s ease;
+}
+#aiInsightCard .top-item:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
 
-/* === AI 洞察卡片樣式 === */
-#aiInsightCard .top-item a:hover { filter: brightness(1.1); }
-
+/* 連結樣式 */
 #aiInsightCard .top-item a {
   color: #93c5fd;
   text-decoration: none;
   transition: all 0.2s ease;
 }
-
 #aiInsightCard .top-item a:hover {
   filter: brightness(1.2);
   text-decoration: underline;
+}
+
+/* 分數條排版 */
+#aiInsightCard .score-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+#aiInsightCard .score-bar {
+  flex: 1;
+  height: 10px;
+  background: #1f2937;
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 200px;
+}
+#aiInsightCard .score-text {
+  min-width: 200px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+/* 分數條漸層顏色（紅到綠） */
+#aiInsightCard #score-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ef4444, #22c55e);
+  transition: width 0.8s ease;
 }
