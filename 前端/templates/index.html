@@ -47,14 +47,9 @@
 </div>
 
 
-<!-- 🧠 新聞AI洞察（Top 5 + 顯示更多/收回 + 說明；不含「全部事件」） -->
+<!-- 🧠 新聞AI洞察（含 Top 區 + 全部事件 + 顯示更多/收回 + 說明） -->
 <div class="card" id="aiInsightCard">
-  <h2>新聞AI洞察</h2>
-
-  <!-- 先顯示一段占位，避免整塊消失 -->
-  <div id="insight-empty" style="color:#94a3b8;margin-bottom:8px;">
-    請先在上方輸入代碼或關鍵字並按「查詢」，AI 會即時計算洞察。
-  </div>
+  <h2>🧠 新聞AI洞察</h2>
 
   <!-- 分數條 + 總覽 -->
   <div class="score-wrap" style="display:flex;align-items:center;gap:12px;">
@@ -67,13 +62,23 @@
     </div>
   </div>
 
-  <!-- Top 事件（預設僅顯示 5 筆；用 JS 的顯示更多/收回控制） -->
+  <!-- Top 事件（預設顯示 5 筆） -->
   <div id="insight-top" style="margin-top:10px;display:grid;gap:8px;"></div>
 
-  <!-- 顯示更多 / 收回（只控制 Top 事件） -->
+  <!-- 顯示更多 / 收回（控制 Top 區） -->
   <div id="insight-top-controls" class="ev-more-controls" style="display:none;gap:8px;margin:10px 0;">
     <button type="button" class="buy-btn"  id="insight-top-more">顯示更多</button>
     <button type="button" class="sell-btn" id="insight-top-collapse">收回</button>
+  </div>
+
+  <!-- 全部事件 -->
+  <h3 style="margin:14px 0 6px;color:#cbd5e1;">全部事件</h3>
+  <ul id="insight-list" style="margin:0 0 0 18px;"></ul>
+
+  <!-- 顯示更多 / 收回（控制 全部事件 區） -->
+  <div id="insight-controls" class="ev-more-controls" style="display:none;gap:8px;margin-top:8px;">
+    <button type="button" class="buy-btn"  id="insight-more">顯示更多</button>
+    <button type="button" class="sell-btn" id="insight-collapse">收回</button>
   </div>
 
   <!-- AI 建議 -->
