@@ -295,9 +295,112 @@ function loadUserRank() {
     .catch(err => console.error('載入排名失敗', err));
 }
 
-// ======== 新聞AI洞察（合併：新聞 / 公告 + AI） ========
+// ======== 新聞 / 公告 ========
+async function fetchEvents() {
+  const qInput = document.getElementById("evQuery");
+  const hoursSel = document.getElementById("evHours");
+  const btn = document.getElementById("evBtn");
+  const list = document.getElementById("evList");
 
-// 簡單 XSS 防護
+  const q = qInput?.value.trim();
+  const hours = hoursSel?.value || 48;
+
+  if (!q) return alert("請輸入代碼或關鍵字");
+
+  list.innerHTML = `<li style="color:#94a3b8;">查詢中…</li>`;
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(
+      `/api/events?query=${encodeURIComponent(q)}&hours=${encodeURIComponent(hours)}&limit=50`,
+      { credentials: "include", headers: { "Accept": "application/json" } }
+    );
+
+    // 401 未登入
+    if (res.status === 401) {
+      list.innerHTML = `<li style="color:#fca5a5;">⚠️ 請先登入後再查詢新聞/公告</li>`;
+      return;
+    }
+
+    // 防止被導向 HTML
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      list.innerHTML = `<li style="color:#fca5a5;">⚠️ 伺服器回傳非 JSON，可能需要重新登入。</li>`;
+      console.warn("[/api/events non-json]", text.slice(0, 200));
+      return;
+    }
+
+    const data = await res.json();
+
+    // debug 輸出（若後端有回傳）
+    if (data.debug) console.log("[/api/events debug]", data.debug);
+
+    if (!data.success) {
+      list.innerHTML = `<li style="color:#ef4444;">${data.message || "查詢失敗"}</li>`;
+      return;
+    }
+
+    // 沒資料時顯示提示
+    if (!data.items || data.items.length === 0) {
+      list.innerHTML = `<li style="color:#94a3b8;">查無近期新聞/公告</li>`;
+      return;
+    }
+
+    // ✨ 一次取回全部，但初次只顯示 5 筆
+    renderEventsOnceThenAll(data.items, list);
+  } catch (err) {
+    console.error("fetchEvents error", err);
+    list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤：${String(err.message || err)}</li>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// 初次渲染 5 筆，其餘在按鈕點擊後一次展開
+function renderEventsOnceThenAll(items, container) {
+  container.innerHTML = "";
+
+  // 先顯示前 5 筆
+  const first = items.slice(0, 5);
+  first.forEach(it => container.appendChild(buildEventItem(it)));
+
+  // 如果超過 5 筆，補一顆「顯示全部」按鈕
+  if (items.length > 5) {
+    const btn = document.createElement("button");
+    btn.textContent = "顯示全部";
+    btn.className = "buy-btn";
+    btn.style.marginTop = "8px";
+
+    btn.onclick = () => {
+      items.slice(5).forEach(it => container.appendChild(buildEventItem(it)));
+      btn.remove(); // 展開後隱藏按鈕
+    };
+
+    const wrap = document.createElement("li");
+    wrap.style.listStyle = "none";
+    wrap.appendChild(btn);
+    container.appendChild(wrap);
+  }
+}
+
+// 建立單一列表項目
+function buildEventItem(it) {
+  const li = document.createElement("li");
+  li.style.marginBottom = "6px";
+  li.innerHTML = `
+    <a href="${it.url}" target="_blank" style="text-decoration:none;">
+      <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
+      <span style="color:${it.risk === "negative" ? "red" : it.risk === "positive" ? "green" : "inherit"};">
+        ${escapeHtml(it.title)}
+      </span>
+      <span style="font-size:12px;color:#94a3b8;">(${escapeHtml(it.source)} ${escapeHtml(it.time)})</span>
+    </a>
+  `;
+  return li;
+}
+
+// 簡單的 XSS 防護（避免 title/source/time 含特殊字元）
 function escapeHtml(s) {
   if (typeof s !== "string") return "";
   return s
@@ -307,9 +410,12 @@ function escapeHtml(s) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-function aiEscape(s){ return escapeHtml(s); }
 
-// 由分數推導標籤與建議（與你原本一致）
+/* =========================
+ *  AI 洞察（SSE 串流版）
+ * ========================= */
+
+/** 分數 → 標籤與建議 */
 function scoreToLabelAndAdvice(s){
   if (s >= 2.0)  return {label:'偏多',     advice:'可加碼或分批佈局'};
   if (s >= 0.8)  return {label:'偏正面',   advice:'觀望或小倉位'};
@@ -318,235 +424,122 @@ function scoreToLabelAndAdvice(s){
   return                {label:'偏空',     advice:'嚴設停損、降低曝險'};
 }
 
-// direction 轉中文
-function dirLabel(d){
-  if (d > 0) return '偏多';
-  if (d < 0) return '偏空';
-  return '中性';
+/** 安全轉義（AI 卡片文案） */
+function aiEscape(s){
+  if (typeof s !== 'string') return '';
+  return s
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
 }
 
-// 事件列表項目（已合併 AI 欄位）
-function buildEventItem(it) {
-  const li = document.createElement("li");
-  li.style.marginBottom = "8px";
-  li.style.listStyle = "none";
-  const riskColor = it.direction > 0 ? '#22c55e' : (it.direction < 0 ? '#ef4444' : '#cbd5e1');
-  const tag = it.type === "announcement" ? "公告" : "新聞";
-  const why = it.why ? `🤖 ${aiEscape(it.why)}` : '';
-  const evScore = typeof it.event_score === 'number' ? (it.event_score >= 0 ? '+' : '') + it.event_score.toFixed(2) : '';
-  li.innerHTML = `
-    <div style="padding:10px;border:1px solid #334155;border-radius:10px;background:#0b1220;">
-      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-        <div>
-          <strong>[${tag}]</strong>
-          <a href="${it.url || '#'}" target="_blank" style="text-decoration:none;color:#93c5fd;">
-            ${escapeHtml(it.title || '')}
-          </a>
-          <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
-            ${escapeHtml(it.source || '')} · ${escapeHtml(it.time || '')}
-          </div>
-        </div>
-        <div style="text-align:right;min-width:120px;">
-          <div style="color:${riskColor};font-weight:600;">${dirLabel(Number(it.direction||0))}</div>
-          <div style="font-size:12px;color:#94a3b8;">影響 ${(evScore || '0.00')}</div>
-          <div style="font-size:12px;color:#94a3b8;">區間 ${escapeHtml(it.horizon || '短')}</div>
-          <div style="font-size:12px;color:#94a3b8;">置信 ${(Number(it.confidence||0)).toFixed(2)}</div>
-        </div>
-      </div>
-      ${why ? `<div style="margin-top:6px;color:#cbd5e1;">${why}</div>` : ''}
-    </div>
-  `;
-  return li;
-}
+/** 觸發 AI 洞察（SSE 邊算邊出） */
+async function loadInsightAddon(query){
+  const hours = document.getElementById('evHours')?.value || 48;
 
-// ===== 分頁狀態（顯示更多 / 收起） =====
-const evState = {
-  query: '',
-  hours: 48,
-  limit: 5,     // 初次顯示 5 筆
-  offset: 0,
-  total: 0,
-  has_more: false,
-  // 暫存目前已渲染（可選）：需要時再加
-};
-
-// 呼叫統一路徑：/api/news-ai-insight
-async function fetchNewsAI(isLoadMore = false) {
-  const qInput  = document.getElementById("evQuery");
-  const hoursSel= document.getElementById("evHours");
-  const btn     = document.getElementById("evBtn");
-  const list    = document.getElementById("evList");
-
-  const q = (qInput?.value || '').trim();
-  const hours = hoursSel?.value || 48;
-  if (!q) return alert("請輸入代碼或關鍵字");
-
-  if (!isLoadMore) {
-    // 新查詢：重置狀態
-    evState.query = q;
-    evState.hours = hours;
-    evState.offset = 0;
-  }
-
-  // Loading UI
-  if (!isLoadMore) list.innerHTML = `<li style="color:#94a3b8;list-style:none;">查詢中…</li>`;
-  btn && (btn.disabled = true);
-
-  try {
-    const url = `/api/news-ai-insight?query=${encodeURIComponent(evState.query)}&hours=${encodeURIComponent(evState.hours)}&limit=${encodeURIComponent(evState.limit)}&offset=${encodeURIComponent(evState.offset)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-
-    if (data.debug) console.log("[/api/news-ai-insight debug]", data.debug);
-    if (!data.success) {
-      list.innerHTML = `<li style="color:#ef4444;list-style:none;">${data.message || "查詢失敗"}</li>`;
-      return;
-    }
-
-    // 更新 AI 卡片（同一次回應）
-    updateInsightCardFromResponse(data);
-
-    // 沒資料
-    if (!data.items || data.items.length === 0) {
-      if (!isLoadMore) list.innerHTML = `<li style="color:#94a3b8;list-style:none;">查無近期新聞/公告</li>`;
-      return;
-    }
-
-    // 渲染列表（支援追加）
-    if (!isLoadMore) list.innerHTML = "";
-    data.items.forEach(it => list.appendChild(buildEventItem(it)));
-
-    // 分頁狀態
-    evState.total   = Number(data.total || 0);
-    evState.has_more= Boolean(data.has_more);
-    evState.offset  = Number(data.offset || 0) + Number(data.limit || evState.limit);
-
-    // 重新渲染「顯示更多 / 收起」控制列
-    renderMoreControls(list);
-
-  } catch (err) {
-    console.error("fetchNewsAI error", err);
-    list.innerHTML = `<li style="color:#ef4444;list-style:none;">⚠️ 查詢錯誤</li>`;
-  } finally {
-    btn && (btn.disabled = false);
-  }
-}
-
-// 控制列（顯示更多 / 收起）
-function renderMoreControls(container){
-  // 先移除舊控制列
-  const old = container.querySelector('li[data-more-controls]');
-  if (old) old.remove();
-
-  // 新控制列
-  const liCtrl = document.createElement('li');
-  liCtrl.setAttribute('data-more-controls', '1');
-  liCtrl.style.listStyle = 'none';
-  liCtrl.style.marginTop = '8px';
-
-  const wrap = document.createElement('div');
-  wrap.style.display = 'flex';
-  wrap.style.gap = '8px';
-
-  if (evState.has_more) {
-    const moreBtn = document.createElement('button');
-    moreBtn.textContent = '顯示更多';
-    moreBtn.className = 'buy-btn';
-    moreBtn.onclick = () => fetchNewsAI(true);
-    wrap.appendChild(moreBtn);
-  }
-
-  // 只要不是「完全沒資料」，就給收起
-  if (evState.offset > evState.limit) {
-    const collapseBtn = document.createElement('button');
-    collapseBtn.textContent = '收起';
-    collapseBtn.className = 'sell-btn';
-    collapseBtn.onclick = () => {
-      // 重新查一次 offset=0 的第一頁
-      evState.offset = 0;
-      fetchNewsAI(false);
-    };
-    wrap.appendChild(collapseBtn);
-  }
-
-  // 右側顯示統計
-  const meta = document.createElement('div');
-  meta.style.marginLeft = 'auto';
-  meta.style.color = '#94a3b8';
-  meta.style.fontSize = '12px';
-  meta.textContent = `${Math.min(evState.offset, evState.total)}/${evState.total}`;
-
-  liCtrl.appendChild(wrap);
-  liCtrl.appendChild(meta);
-  container.appendChild(liCtrl);
-}
-
-// ===== AI Insight 卡片（用同一個 API 回應更新） =====
-function updateInsightCardFromResponse(data){
-  const card       = document.getElementById('aiInsightCard');
-  const topBox     = document.getElementById('insight-top');
-  const note       = document.getElementById('insight-note');
-  const scoreVal   = document.getElementById('score-val');
-  const scoreLabel = document.getElementById('score-label');
-  const scoreFill  = document.getElementById('score-fill');
+  const card      = document.getElementById('aiInsightCard');
+  const topBox    = document.getElementById('insight-top');
+  const note      = document.getElementById('insight-note');
+  const scoreVal  = document.getElementById('score-val');
+  const scoreLbl  = document.getElementById('score-label');
+  const scoreFill = document.getElementById('score-fill');
 
   if (!card) return;
   card.style.display = 'block';
+  topBox.innerHTML = '<div class="top-item">分析中…</div>';
+  note.textContent = '';
 
-  const s = Number(data.stock_score || 0);
-  const sa = scoreToLabelAndAdvice(s);
+  // 使用 SSE；後端需已開啟 /api/ai/insight/stream 並允許 credentials
+  const url = `/api/ai/insight/stream?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}&limit=20`;
+  const es  = new EventSource(url, { withCredentials: true });
 
-  if (scoreVal)   scoreVal.textContent   = (s >= 0 ? '+' : '') + s.toFixed(2);
-  if (scoreLabel) scoreLabel.textContent = sa.label;
-  if (note)       note.textContent       = '建議：' + sa.advice;
+  let idx = 0;
+  topBox.innerHTML = '';
 
-  if (scoreFill) {
-    const pct = Math.max(0, Math.min(100, 50 + (s / 5) * 50)); // -5~+5 → 0~100%
-    scoreFill.style.width = pct + '%';
-  }
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
 
-  if (topBox) {
-    topBox.innerHTML = '';
-    (data.top_items || []).forEach((it, i) => {
-      const color = it.direction > 0 ? '#22c55e' : (it.direction < 0 ? '#ef4444' : '#9ca3af');
-      const el = document.createElement('div');
-      el.className = 'top-item';
-      el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;background:#0b1220;';
-      const evSa = scoreToLabelAndAdvice(Number(it.event_score||0));
-      el.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div><strong>#${i+1}</strong>
-            <span style="color:${color}">市場氛圍：${evSa.label}</span> ·
-            <span>影響指數 ${(it.event_score>=0?'+':'')+(Number(it.event_score||0)).toFixed(2)}</span>
+      if (data.type === 'meta') {
+        // 可選：顯示總則數 data.total
+        return;
+      }
+
+      if (data.type === 'item' || data.type === 'update') {
+        if (data.type === 'item') idx += 1;
+        const it = data.item;
+        const color = it.direction > 0 ? '#22c55e' : it.direction < 0 ? '#ef4444' : '#9ca3af';
+        const el = document.createElement('div');
+        el.className = 'top-item';
+        el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
+        const lab = scoreToLabelAndAdvice(Number(it.event_score||0)).label;
+
+        el.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div><strong>#${idx}</strong>
+              <span style="color:${color}">市場氛圍：${lab}</span> ·
+              <span>影響指數 ${(it.event_score>=0?'+':'')+(it.event_score||0).toFixed(2)}</span>
+            </div>
+            ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
           </div>
-          ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
-        </div>
-        <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
-        <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
-        ${it.why ? `<div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why)}</div>` : ''}
-      `;
-      topBox.appendChild(el);
+          <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
+          <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
+          <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
+        `;
+        topBox.appendChild(el);
+        return;
+      }
+
+      if (data.type === 'done') {
+        const s  = Number(data.stock_score || 0);
+        const sa = scoreToLabelAndAdvice(s);
+        scoreVal.textContent = (s >= 0 ? '+' : '') + s.toFixed(2);
+        scoreLbl.textContent = sa.label;
+        scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s / 5) * 50)) + '%';
+        note.textContent = '建議：' + sa.advice;
+        es.close();
+        return;
+      }
+    } catch (err) {
+      console.warn('[SSE parse error]', err);
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    note.textContent = '串流中斷或未登入，請重新查詢或先登入後再試';
+  };
+}
+
+/** 綁定：用查詢按鈕/Enter 觸發 AI 洞察（不動你的新聞查詢程式） */
+window.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('evBtn');
+  const qEl = document.getElementById('evQuery');
+
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const q = qEl?.value?.trim();
+      if (q) loadInsightAddon(q);
     });
   }
-}
+  if (qEl) {
+    qEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const q = qEl.value?.trim();
+        if (q) loadInsightAddon(q);
+      }
+    });
+  }
 
-// ===== 綁定查詢按鈕 & Enter =====
-window.addEventListener("DOMContentLoaded", () => {
-  const btn = document.getElementById("evBtn");
-  const q   = document.getElementById("evQuery");
-  const hoursSel = document.getElementById("evHours");
-
-  if (q && !q.value) q.value = "2330"; // 預設台積電
-
-  if (btn) btn.addEventListener("click", () => fetchNewsAI(false));
-  if (q)   q.addEventListener("keydown", (e) => { if (e.key === "Enter") fetchNewsAI(false); });
-  if (hoursSel) hoursSel.addEventListener("change", () => fetchNewsAI(false));
+  // 說明開關（若你的 HTML 有這兩個節點）
+  const toggleBtn = document.getElementById('insight-help-toggle');
+  const ruleBox   = document.getElementById('insight-rules');
+  if (toggleBtn && ruleBox){
+    toggleBtn.addEventListener('click', () => {
+      ruleBox.style.display =
+        (ruleBox.style.display === 'none' || !ruleBox.style.display) ? 'block' : 'none';
+    });
+  }
 });
-
-const res = await fetch(url);
-if (!res.ok) {
-  const text = await res.text();
-  console.error("news-ai-insight HTTP error:", res.status, text);
-  throw new Error("服務錯誤（" + res.status + "）");
-}
-const data = await res.json();
