@@ -295,268 +295,325 @@ function loadUserRank() {
     .catch(err => console.error('載入排名失敗', err));
 }
 
-// ======== 新聞 / 公告 ========
-async function fetchEvents() {
+// ================== 公用 ==================
+function escapeHtml(s){ return typeof s==="string"
+  ? s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")
+  : ""; }
+
+function aiEscape(s){ return escapeHtml(s); }
+
+function scoreToLabelAndAdvice(s){
+  if (s >= 2.0)  return {label:"偏多",   advice:"可加碼或分批佈局"};
+  if (s >= 0.8)  return {label:"偏正面", advice:"觀望或小倉位"};
+  if (s > -0.8)  return {label:"中性",   advice:"保持觀望"};
+  if (s > -2.0)  return {label:"偏負面", advice:"減碼、保守應對"};
+  return               {label:"偏空",   advice:"嚴設停損、降低曝險"};
+}
+
+// ================== 新聞 / 公告 ==================
+async function fetchEvents(){
   const qInput = document.getElementById("evQuery");
   const hoursSel = document.getElementById("evHours");
   const btn = document.getElementById("evBtn");
   const list = document.getElementById("evList");
 
+  if (!list) return; // 頁面沒有新聞清單就略過新聞
   const q = qInput?.value.trim();
   const hours = hoursSel?.value || 48;
-
   if (!q) return alert("請輸入代碼或關鍵字");
 
-  ensureListIsUL(); // 確保 #evList 是 <ul>
+  ensureListIsUL();
   list.innerHTML = `<li style="color:#94a3b8;">查詢中…</li>`;
   if (btn) btn.disabled = true;
 
-  try {
-    const res = await fetch(
-      `/api/events?query=${encodeURIComponent(q)}&hours=${encodeURIComponent(hours)}&limit=50`,
-      { credentials: "include", headers: { "Accept": "application/json" } }
-    );
+  try{
+    const res = await fetch(`/api/events?query=${encodeURIComponent(q)}&hours=${encodeURIComponent(hours)}&limit=50`, {
+      credentials:"include", headers:{Accept:"application/json"}
+    });
 
-    // 401 未登入
-    if (res.status === 401) {
+    if (res.status === 401){
       list.innerHTML = `<li style="color:#fca5a5;">⚠️ 請先登入後再查詢新聞/公告</li>`;
       return;
     }
 
-    // 防止被導向 HTML
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (!ct.includes("application/json")) {
+    const ct = (res.headers.get("content-type")||"").toLowerCase();
+    if (!ct.includes("application/json")){
       const text = await res.text();
       list.innerHTML = `<li style="color:#fca5a5;">⚠️ 伺服器回傳非 JSON，可能需要重新登入。</li>`;
-      console.warn("[/api/events non-json]", text.slice(0, 200));
+      console.warn("[/api/events non-json]", text.slice(0,200));
       return;
     }
 
     const data = await res.json();
-
     if (data.debug) console.log("[/api/events debug]", data.debug);
 
-    if (!data.success) {
+    if (!data.success){
       list.innerHTML = `<li style="color:#ef4444;">${data.message || "查詢失敗"}</li>`;
       return;
     }
-
-    if (!data.items || data.items.length === 0) {
+    if (!data.items || data.items.length===0){
       list.innerHTML = `<li style="color:#94a3b8;">查無近期新聞/公告</li>`;
       return;
     }
-
-    // ✨ 一次取回全部，但初次只顯示 5 筆，可切換「顯示更多 / 收起」
     renderEventsWithToggle(data.items, list);
-  } catch (err) {
+  }catch(err){
     console.error("fetchEvents error", err);
     list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤：${String(err.message || err)}</li>`;
-  } finally {
+  }finally{
     if (btn) btn.disabled = false;
   }
 }
 
-// 渲染（可切換 顯示更多 / 收起）
-function renderEventsWithToggle(items, container) {
+function renderEventsWithToggle(items, container){
   const EXPAND_KEY = "__expanded";
   const expanded = container.dataset[EXPAND_KEY] === "1";
-
   container.innerHTML = "";
 
   const sliceEnd = expanded ? items.length : Math.min(5, items.length);
   items.slice(0, sliceEnd).forEach(it => container.appendChild(buildEventItem(it)));
 
-  // 控制列
-  if (items.length > 5) {
+  if (items.length > 5){
     const ctrl = document.createElement("li");
     ctrl.className = "ev-more-controls";
     ctrl.style.listStyle = "none";
     ctrl.style.marginTop = "8px";
-    ctrl.innerHTML = `
-      <button type="button" class="buy-btn" id="evToggleBtn">${expanded ? "收起" : "顯示更多"}</button>
-    `;
+    ctrl.innerHTML = `<button type="button" class="buy-btn" id="evToggleBtn">${expanded ? "收起" : "顯示更多"}</button>`;
     container.appendChild(ctrl);
 
     const toggleBtn = ctrl.querySelector("#evToggleBtn");
-    if (toggleBtn) {
-      toggleBtn.onclick = () => {
-        container.dataset[EXPAND_KEY] = expanded ? "0" : "1";
-        renderEventsWithToggle(items, container);
-      };
-    }
+    toggleBtn.onclick = () => {
+      container.dataset[EXPAND_KEY] = expanded ? "0" : "1";
+      renderEventsWithToggle(items, container);
+    };
   }
 }
 
-// 建立單一列表項目（固定色票紅/綠）
-function buildEventItem(it) {
+function buildEventItem(it){
   const li = document.createElement("li");
   li.style.marginBottom = "6px";
-
-  const riskColor = it.risk === "negative" ? "#ef4444"
-                  : it.risk === "positive" ? "#22c55e"
-                  : "#cbd5e1";
-
+  const riskColor = it.risk === "negative" ? "#ef4444" : it.risk === "positive" ? "#22c55e" : "#cbd5e1";
   li.innerHTML = `
     <a href="${it.url}" target="_blank" style="text-decoration:none;">
       <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
-      <span style="color:${riskColor};">
-        ${escapeHtml(it.title)}
-      </span>
+      <span style="color:${riskColor};">${escapeHtml(it.title)}</span>
       <span style="font-size:12px;color:#94a3b8;">(${escapeHtml(it.source)} ${escapeHtml(it.time)})</span>
-    </a>
-  `;
+    </a>`;
   return li;
 }
 
-// 簡單的 XSS 防護（避免 title/source/time 含特殊字元）
-function escapeHtml(s) {
-  if (typeof s !== "string") return "";
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-// 確保 #evList 是 <ul>（避免 <div> + <li> 導致樣式出不來）
 function ensureListIsUL(){
-  const list = document.getElementById('evList');
+  const list = document.getElementById("evList");
   if (!list) return;
-  if (list.tagName !== 'UL'){
-    const ul = document.createElement('ul');
-    ul.id = 'evList';
-    ul.className = list.className || '';
-    ul.style.cssText = list.style.cssText || '';
+  if (list.tagName !== "UL"){
+    const ul = document.createElement("ul");
+    ul.id = "evList";
+    ul.className = list.className || "";
+    ul.style.cssText = list.style.cssText || "";
     ul.innerHTML = list.innerHTML;
     list.replaceWith(ul);
   }
 }
 
-/* =========================
- *  AI 洞察（SSE 串流版）
- * ========================= */
+// ================== AI 洞察（合併 API 版，內建 顯示更多/收回 + 說明） ==================
+const AI_LIST_PAGE = 5;
+let aiListState = { expanded:false, items:[] };
 
-/** 分數 → 標籤與建議 */
-function scoreToLabelAndAdvice(s){
-  if (s >= 2.0)  return {label:'偏多',     advice:'可加碼或分批佈局'};
-  if (s >= 0.8)  return {label:'偏正面',   advice:'觀望或小倉位'};
-  if (s > -0.8)  return {label:'中性',     advice:'保持觀望'};
-  if (s > -2.0)  return {label:'偏負面',   advice:'減碼、保守應對'};
-  return                {label:'偏空',     advice:'嚴設停損、降低曝險'};
+function ensureAiStructure(){
+  // 確保基本節點存在（沒有就動態建）
+  const card = document.getElementById("aiInsightCard");
+  if (!card) return null;
+
+  let top = document.getElementById("insight-top");
+  if (!top){ top = document.createElement("div"); top.id = "insight-top"; top.style.cssText = "margin-top:10px;display:grid;gap:8px;"; card.appendChild(top); }
+
+  let list = document.getElementById("insight-list");
+  if (!list){ list = document.createElement("ul"); list.id = "insight-list"; list.style.margin = "10px 0 0 18px"; card.appendChild(list); }
+
+  let ctrl = document.getElementById("insight-controls");
+  if (!ctrl){
+    ctrl = document.createElement("div");
+    ctrl.id = "insight-controls";
+    ctrl.className = "ev-more-controls";
+    ctrl.style.cssText = "display:none;gap:8px;margin-top:8px;";
+    ctrl.innerHTML = `
+      <button type="button" class="buy-btn" id="insight-more">顯示更多</button>
+      <button type="button" class="sell-btn" id="insight-collapse">收回</button>`;
+    card.appendChild(ctrl);
+  }
+
+  if (!document.getElementById("insight-help-toggle")){
+    const helpBar = document.createElement("div");
+    helpBar.style.marginTop = "10px";
+    helpBar.innerHTML = `<button id="insight-help-toggle" class="buy-btn" type="button">ℹ️ 說明</button>`;
+    card.appendChild(helpBar);
+
+    const rules = document.createElement("div");
+    rules.id = "insight-rules";
+    rules.style.cssText = "display:none;margin-top:8px;padding:10px;border:1px dashed #334155;border-radius:10px;";
+    rules.innerHTML = `
+      <strong>影響指數</strong>：方向 × 強度 × 信心（-5 ~ +5）。
+      <ul class="muted" style="margin:6px 0; padding-left:18px;">
+        <li>≥ +2.0：偏多 → 可加碼或分批佈局</li>
+        <li>+0.8 ~ +2.0：偏正面 → 觀望或小倉位</li>
+        <li>-0.8 ~ +0.8：中性 → 保持觀望</li>
+        <li>-2.0 ~ -0.8：偏負面 → 減碼、保守</li>
+        <li>≤ -2.0：偏空 → 嚴設停損、降低曝險</li>
+      </ul>`;
+    card.appendChild(rules);
+  }
+  return card;
 }
 
-/** 安全轉義（AI 卡片文案） */
-function aiEscape(s){
-  if (typeof s !== 'string') return '';
-  return s
-    .replaceAll('&','&amp;')
-    .replaceAll('<','&lt;')
-    .replaceAll('>','&gt;')
-    .replaceAll('"','&quot;')
-    .replaceAll("'",'&#39;');
-}
-
-/** 觸發 AI 洞察（SSE 邊算邊出） */
 async function loadInsightAddon(query){
-  const hours = document.getElementById('evHours')?.value || 48;
-
-  const card      = document.getElementById('aiInsightCard');
-  const topBox    = document.getElementById('insight-top');
-  const note      = document.getElementById('insight-note');
-  const scoreVal  = document.getElementById('score-val');
-  const scoreLbl  = document.getElementById('score-label');
-  const scoreFill = document.getElementById('score-fill');
-
+  const hours = document.getElementById("evHours")?.value || 48;
+  const card = ensureAiStructure();
   if (!card) return;
 
-  // 🟡 載入階段：不要顯示「中性 / 0.00」，改為「分析中… / —」
-  card.style.display = 'block';
-  if (topBox) topBox.innerHTML = '<div class="top-item">分析中…</div>';
-  if (note) note.textContent = '';
-  if (scoreVal) scoreVal.textContent = '—';
-  if (scoreLbl) scoreLbl.textContent = '分析中…';
-  if (scoreFill) scoreFill.style.width = '50%';
+  const topBox    = document.getElementById("insight-top");
+  const note      = document.getElementById("insight-note"); // 若你有放建議區塊就會抓到
+  const scoreVal  = document.getElementById("score-val");
+  const scoreLbl  = document.getElementById("score-label");
+  const scoreFill = document.getElementById("score-fill");
+  const listEl    = document.getElementById("insight-list");
+  const ctrlEl    = document.getElementById("insight-controls");
 
-  // 使用 SSE；後端需已開啟 /api/ai/insight/stream 並允許 credentials
-  const url = `/api/ai/insight/stream?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}&limit=20`;
-  const es  = new EventSource(url, { withCredentials: true });
+  // 載入狀態（不顯示 0.00 / 中性）
+  card.style.display = "block";
+  if (topBox) topBox.innerHTML = `<div class="top-item">分析中…</div>`;
+  if (note) note.textContent = "";
+  if (scoreVal) scoreVal.textContent = "—";
+  if (scoreLbl) scoreLbl.textContent = "分析中…";
+  if (scoreFill) scoreFill.style.width = "50%";
+  if (listEl) listEl.innerHTML = "";
+  if (ctrlEl) ctrlEl.style.display = "none";
 
-  let idx = 0;
-  if (topBox) topBox.innerHTML = '';
+  try{
+    const url = `/api/news-ai-insight?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}&limit=1000&offset=0`;
+    const res = await fetch(url, { credentials:"include" });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "分析失敗");
 
-  es.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
+    // 總分
+    const s  = Number(data.stock_score || 0);
+    const sa = scoreToLabelAndAdvice(s);
+    if (scoreVal)  scoreVal.textContent  = (s>=0?"+":"") + s.toFixed(2);
+    if (scoreLbl)  scoreLbl.textContent  = sa.label;
+    if (scoreFill) scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s/5)*50)) + "%";
+    if (note)      note.textContent      = "建議：" + sa.advice;
 
-      if (data.type === 'meta') return;
-
-      if (data.type === 'item' || data.type === 'update') {
-        if (!topBox) return;
-        if (data.type === 'item') idx += 1;
-
-        const it = data.item || {};
-        const color = it.direction > 0 ? '#22c55e' : it.direction < 0 ? '#ef4444' : '#9ca3af';
-        const el = document.createElement('div');
-        el.className = 'top-item';
-        el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
-        const lab = scoreToLabelAndAdvice(Number(it.event_score||0)).label;
-
+    // Top 事件
+    if (topBox){
+      topBox.innerHTML = "";
+      (data.top_items || []).forEach((it, i) => {
+        const color = it.direction > 0 ? "#22c55e" : it.direction < 0 ? "#ef4444" : "#9ca3af";
+        const el = document.createElement("div");
+        el.className = "top-item";
+        el.style.cssText = "padding:10px;border:1px solid #334155;border-radius:10px;";
         el.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div><strong>#${idx}</strong>
-              <span style="color:${color}">市場氛圍：${lab}</span> ·
-              <span>影響指數 ${(it.event_score>=0?'+':'')+(Number(it.event_score||0)).toFixed(2)}</span>
+            <div><strong>#${i+1}</strong>
+              <span style="color:${color}">市場氛圍：${scoreToLabelAndAdvice(Number(it.event_score||0)).label}</span> ·
+              <span>影響指數 ${(it.event_score>=0?"+":"")+(Number(it.event_score||0)).toFixed(2)}</span>
             </div>
-            ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
+            ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ""}
           </div>
-          <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
-          <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
-          <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
-        `;
+          <div style="margin-top:6px;">${aiEscape(it.title||"")}</div>
+          <div class="small" style="margin-top:6px;">${aiEscape(it.source||"")} ${aiEscape(it.time||"")}</div>
+          <div style="margin-top:6px;">🤖 ${aiEscape(it.why||"")}</div>`;
         topBox.appendChild(el);
-        return;
-      }
-
-      if (data.type === 'done') {
-        const s  = Number(data.stock_score || 0);
-        const sa = scoreToLabelAndAdvice(s);
-        if (scoreVal)  scoreVal.textContent  = (s >= 0 ? '+' : '') + s.toFixed(2);
-        if (scoreLbl)  scoreLbl.textContent  = sa.label;
-        if (scoreFill) scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s / 5) * 50)) + '%';
-        if (note) note.textContent = '建議：' + sa.advice;
-        es.close();
-        return;
-      }
-    } catch (err) {
-      console.warn('[SSE parse error]', err);
+      });
     }
-  };
 
-  es.onerror = () => {
-    es.close();
-    if (topBox) topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察</div>';
-    if (note) note.textContent = '串流中斷或未登入，請重新查詢或先登入後再試';
-  };
+    // 全部事件（顯示更多 / 收回）
+    aiListState.items = data.items || [];
+    aiListState.expanded = false;
+    renderAiList();
+    updateAiControls();
+  }catch(err){
+    console.error(err);
+    if (topBox) topBox.innerHTML = `<div class="top-item">無法取得 AI 洞察</div>`;
+    if (note) note.textContent = String(err.message || err);
+  }
 }
 
-/** 綁定：查詢時同時更新 新聞 & AI（避免只更新其一） */
-window.addEventListener('DOMContentLoaded', () => {
-  const btn = document.getElementById('evBtn');
-  const qEl = document.getElementById('evQuery');
-  const hoursSel = document.getElementById('evHours');
+function renderAiList(){
+  const listEl = document.getElementById("insight-list");
+  if (!listEl) return;
+  const { items, expanded } = aiListState;
+
+  listEl.innerHTML = "";
+  const showing = expanded ? items : items.slice(0, AI_LIST_PAGE);
+
+  showing.forEach(it => {
+    const riskColor = it.direction > 0 ? "#22c55e" : it.direction < 0 ? "#ef4444" : "#cbd5e1";
+    const score = typeof it.event_score === "number" ? it.event_score : 0;
+    const li = document.createElement("li");
+    li.style.marginBottom = "8px";
+    li.innerHTML = `
+      <a href="${it.url || "#"}" ${it.url ? 'target="_blank"' : ""} style="text-decoration:none;">
+        <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
+        <span style="color:${riskColor}">${aiEscape(it.title || "")}</span>
+        <span class="small">(${aiEscape(it.source || "")} ${aiEscape(it.time || "")})</span>
+      </a>
+      <div class="small" style="margin-top:2px;">
+        <span style="padding:1px 6px;border:1px solid #334155;border-radius:10px;margin-right:6px;">
+          影響 ${(score>=0?"+":"")}${score.toFixed(2)}
+        </span>
+        ${it.why ? `🤖 ${aiEscape(it.why)}` : ""}
+      </div>`;
+    listEl.appendChild(li);
+  });
+
+  const moreBtn = document.getElementById("insight-more");
+  const colBtn  = document.getElementById("insight-collapse");
+  if (moreBtn){
+    moreBtn.textContent = aiListState.expanded ? "已顯示全部" : "顯示更多";
+    moreBtn.disabled = aiListState.expanded || aiListState.items.length <= AI_LIST_PAGE;
+  }
+  if (colBtn) colBtn.disabled = !aiListState.expanded;
+}
+
+function updateAiControls(){
+  const ctrlEl = document.getElementById("insight-controls");
+  if (!ctrlEl) return;
+  const need = aiListState.items.length > AI_LIST_PAGE;
+  ctrlEl.style.display = need ? "flex" : "none";
+
+  const moreBtn = document.getElementById("insight-more");
+  const colBtn  = document.getElementById("insight-collapse");
+  if (moreBtn) moreBtn.onclick = () => { aiListState.expanded = true;  renderAiList(); };
+  if (colBtn)  colBtn.onclick  = () => { aiListState.expanded = false; renderAiList(); window.scrollTo({top: ctrlEl.offsetTop - 160, behavior:"smooth"}); };
+
+  // 說明按鈕（確保可用）
+  const helpBtn = document.getElementById("insight-help-toggle");
+  const rules   = document.getElementById("insight-rules");
+  if (helpBtn && rules && !helpBtn.__bound){
+    helpBtn.__bound = true;
+    helpBtn.addEventListener("click", () => {
+      const show = (rules.style.display === "none" || !rules.style.display);
+      rules.style.display = show ? "block" : "none";
+    });
+  }
+}
+
+// ================== 綁定 ==================
+window.addEventListener("DOMContentLoaded", () => {
+  const btn = document.getElementById("evBtn");
+  const qEl = document.getElementById("evQuery");
+  const hoursSel = document.getElementById("evHours");
 
   if (qEl && !qEl.value) qEl.value = "2330";
 
-  function trigger() {
+  const trigger = () => {
     const q = qEl?.value?.trim();
     if (!q) return;
-    fetchEvents();        // 新聞（含 顯示更多/收起）
-    loadInsightAddon(q);  // AI 洞察（避免先顯示 0.00）
-  }
+    // 新聞（若頁面有 evList 就會顯示，沒有就只做 AI）
+    fetchEvents();
+    // AI 洞察
+    loadInsightAddon(q);
+  };
 
-  if (btn) btn.addEventListener('click', trigger);
-  if (qEl)  qEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') trigger(); });
-  if (hoursSel) hoursSel.addEventListener('change', trigger);
+  if (btn) btn.addEventListener("click", trigger);
+  if (qEl)  qEl.addEventListener("keydown", e => { if (e.key === "Enter") trigger(); });
+  if (hoursSel) hoursSel.addEventListener("change", trigger);
 });
-
