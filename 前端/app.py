@@ -24,8 +24,6 @@ from urllib.parse import quote_plus
 import xml.etree.ElementTree as ET
 from typing import Optional
 from email.utils import parsedate_to_datetime
-import json
-from concurrent.futures import ThreadPoolExecutor
 
 # 載入 .env 檔案
 load_dotenv()
@@ -857,14 +855,103 @@ def _try_fetch_ann(code: Optional[str], keyword: Optional[str],
         return pd.concat(frames, ignore_index=True)
     return pd.DataFrame()
 
-# ===== API：即時新聞／公告（FinMind + RSS 備援） =====
-@app.get("/api/events")
-@login_required
-def api_events():
+# ==================== 共用：取得事件（沿用你原本邏輯，避免重工） ====================
+def _get_events_raw(query: str, hours: int = 48, limit: int = 50):
     """
-    /api/events?query=2330&hours=48&limit=50
-    /api/events?query=台積電
-    FinMind 抓不到 → 自動用 Google News RSS 備援
+    回傳 (items, debug_log)
+    items 結構與 /api/events 相同；若 FinMind 抓不到自動用 RSS。
+    """
+    with app.test_request_context(f"/api/events?query={query}&hours={hours}&limit={limit}"):
+        resp = api_events()
+        try:
+            data = resp.get_json()
+        except AttributeError:
+            data = resp[0].get_json() if isinstance(resp, tuple) else {}
+    items = (data or {}).get("items", []) or []
+    debug = (data or {}).get("debug", []) or []
+    return items, debug
+
+def _enrich_with_ai(items: list) -> tuple[list, float]:
+    """
+    逐則評分並回傳 (enriched_items, stock_score)。
+    enriched_items 會多出：direction/severity/horizon/confidence/event_score。
+    stock_score 用 |event_score| 當權重做加權平均（你的既有邏輯）。
+    """
+    enriched = []
+    for ev in items:
+        text = f"{ev.get('title','')}（來源:{ev.get('source','')} 時間:{ev.get('time','')}）"
+        info = _ai_eval_one_event(text)
+        ev_score = _ai_event_score(info)
+        enriched.append({**ev, **info, "event_score": ev_score})
+
+    if not enriched:
+        return [], 0.0
+
+    num = den = 0.0
+    for x in enriched:
+        w = max(0.1, abs(x["event_score"]))
+        num += x["event_score"] * w
+        den += w
+    stock_score = num / den if den > 0 else 0.0
+
+    return enriched, round(stock_score, 3)
+
+# ==================== 新：單一路徑「新聞AI洞察」＋分頁 ====================
+@app.get("/api/news-ai-insight")
+@login_required
+def api_news_ai_insight():
+    """
+    統一後端 API：新聞AI洞察
+    例：
+      /api/news-ai-insight?query=2330&hours=48&limit=5&offset=0
+    回傳：
+      - items：這一頁的事件（已含 AI 欄位）
+      - total/offset/limit/has_more：分頁資訊
+      - stock_score、top_items（取 |event_score| 最大的前 3）
+    前端做法：初次請求 limit=5、offset=0；按「顯示更多」時 offset += limit；「收起」就重設 offset=0。
+    """
+    q = request.args.get("query", "").strip()
+    hours = int(request.args.get("hours", "48"))
+    limit = max(1, int(request.args.get("limit", "5")))     # 預設每頁 5
+    offset = max(0, int(request.args.get("offset", "0")))   # 起始偏移
+
+    if not q:
+        return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
+
+    # 1) 先拿所有事件（依你原本 /api/events 的排序去重）
+    all_items, debug_log = _get_events_raw(q, hours=hours, limit=50 if limit < 50 else limit*4)
+    total = len(all_items)
+
+    # 2) AI enrich（一次處理，再分頁切片 → 保證分頁穩定）
+    enriched_all, stock_score = _enrich_with_ai(all_items)
+
+    # 3) top_items（從全部 enriched 中取 |event_score| 最大的 3 個）
+    top_items = sorted(enriched_all, key=lambda z: abs(z.get("event_score", 0)), reverse=True)[:3]
+
+    # 4) 分頁切片
+    page_items = enriched_all[offset: offset + limit]
+    has_more = (offset + limit) < total
+
+    return jsonify(
+        success=True,
+        query=q,
+        window_hours=hours,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        stock_score=stock_score,
+        items=page_items,   # 只回傳當頁，給前端顯示（預設 5 筆）
+        top_items=top_items,
+        debug=debug_log
+    )
+
+# ==================== 相容性：保留舊 API，但導向新概念 ====================
+@app.get("/api/ai/insight")
+@login_required
+def api_ai_insight_compat():
+    """
+    舊路徑相容：維持行為，但建議前端改用 /api/news-ai-insight 做分頁。
     """
     q = request.args.get("query", "").strip()
     hours = int(request.args.get("hours", "48"))
@@ -872,346 +959,18 @@ def api_events():
     if not q:
         return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
 
-    debug_log = []
-    is_code = q.isdigit()
-    code = q if is_code else None
-    keyword = _maybe_get_name_by_code(q) if is_code else q
-
-    since_dt = datetime.now() - timedelta(hours=hours)
-    start_date = since_dt.strftime("%Y-%m-%d")
-    end_date = datetime.now().strftime("%Y-%m-%d")
-
-    items = []
-
-    # ---- FinMind 新聞 ----
-    try:
-        df_news = _try_fetch_news(code, keyword, start_date, end_date, debug_log)
-        if df_news is not None and not df_news.empty:
-            for _, r in df_news.iterrows():
-                title = str(r.get("title") or r.get("news_title") or "")
-                src = str(r.get("source") or r.get("media") or "新聞")
-                url = str(r.get("url") or r.get("link") or "")
-                dt = str(r.get("date") or r.get("time") or end_date)
-                if dt >= start_date and title:
-                    items.append({
-                        "type": "news",
-                        "title": title,
-                        "source": src,
-                        "time": dt,
-                        "url": url,
-                        "risk": _label_risk(title),
-                    })
-        else:
-            debug_log.append("FinMind news empty")
-    except Exception as e:
-        debug_log.append(f"news total error: {e}")
-
-    # ---- FinMind 公告 ----
-    try:
-        df_ann = _try_fetch_ann(code, keyword, start_date, end_date, debug_log)
-        if df_ann is not None and not df_ann.empty:
-            for _, r in df_ann.iterrows():
-                title = str(r.get("title") or r.get("subject") or "")
-                url = str(r.get("url") or r.get("link") or "")
-                dt = str(r.get("date") or r.get("time") or end_date)
-                if dt >= start_date and title:
-                    items.append({
-                        "type": "announcement",
-                        "title": title,
-                        "source": "公開資訊觀測站",
-                        "time": dt,
-                        "url": url,
-                        "risk": _label_risk(title),
-                    })
-        else:
-            debug_log.append("FinMind announcements empty")
-    except Exception as e:
-        debug_log.append(f"ann total error: {e}")
-
-    # ---- FinMind 完全抓不到 → RSS 備援 ----
-    if not items:
-        rss_kw = (keyword or q).strip()
-        rss_items = _fetch_google_news_rss(rss_kw, hours=hours, limit=limit)
-        debug_log.append(f"RSS items: {len(rss_items)}")
-        items.extend(rss_items)
-
-    # ---- 去重 + 排序 ----
-    seen = set()
-    dedup = []
-    for it in items:
-        key = (it.get("title","").strip().lower(), (it.get("source","") or "").strip().lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        dedup.append(it)
-
-    # FinMind 的 time 多為 YYYY-MM-DD，可字串排序；RSS time 可能無法可靠排序
-    dedup.sort(key=lambda x: x.get("time", ""), reverse=True)
+    all_items, debug_log = _get_events_raw(q, hours=hours, limit=limit)
+    enriched_all, stock_score = _enrich_with_ai(all_items)
+    top_items = sorted(enriched_all, key=lambda z: abs(z.get("event_score", 0)), reverse=True)[:3]
 
     return jsonify(
         success=True,
         query=q,
-        items=dedup[:limit],
-        window_hours=hours,
-        debug=debug_log
-    )
-
-
-# --------------------(ADD) AI Insight Helpers --------------------
-AI_PROMPT_MINI = (
-    "你是金融事件分析助手。請針對輸入的一則中文新聞或公告，僅回傳 JSON：\n"
-    "{\n"
-    "  \"direction\": -1 | 0 | 1,\n"
-    "  \"severity\": 1-5,\n"
-    "  \"horizon\": \"短\"|\"中\"|\"長\",\n"
-    "  \"confidence\": 0.0-1.0,\n"
-    "  \"why\": \"50字內重點原因\"\n"
-    "}\n"
-    "若無法判斷，direction=0、severity=1、confidence<=0.3。"
-)
-
-def _ai_rule_eval_basic(title: str) -> dict:
-    risk = _label_risk(title or "")
-    if risk == "positive":
-        return {"direction": 1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏多關鍵詞"}
-    if risk == "negative":
-        return {"direction": -1, "severity": 3, "horizon": "短", "confidence": 0.55, "why": "偏空關鍵詞"}
-    return {"direction": 0, "severity": 1, "horizon": "短", "confidence": 0.30, "why": "資訊有限"}
-
-def _ai_event_score(info: dict) -> float:
-    d = int(info.get("direction", 0))
-    sev = max(1, min(5, int(info.get("severity", 1))))
-    conf = max(0.0, min(1.0, float(info.get("confidence", 0.0))))
-    return float(d) * float(sev) * float(conf)
-
-def _safe_json_loads(s: str):
-    try:
-        return json.loads(s)
-    except Exception:
-        return None
-
-def _ai_eval_one_event(text: str) -> dict:
-    if not api_key:
-        return _ai_rule_eval_basic(text)
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": AI_PROMPT_MINI},
-                {"role": "user", "content": text[:1800]},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            timeout=20,
-        )
-        raw = getattr(resp.choices[0].message, "content", "") or ""
-        parsed = _safe_json_loads(raw) if isinstance(raw, str) else None
-        if isinstance(parsed, dict):
-            out = {
-                "direction": int(parsed.get("direction", 0)),
-                "severity": max(1, min(5, int(parsed.get("severity", 1)))),
-                "horizon": str(parsed.get("horizon", "短"))[:2],
-                "confidence": max(0.0, min(1.0, float(parsed.get("confidence", 0.0)))),
-                "why": str(parsed.get("why", ""))[:100],
-            }
-            out["direction"] = -1 if out["direction"] < 0 else (1 if out["direction"] > 0 else 0)
-            return out
-    except Exception as e:
-        print(f"[AI] error fallback: {e}")
-    return _ai_rule_eval_basic(text)
-
-def _ai_eval_batch(text_list: list[str]) -> list[dict]:
-    if not api_key or not text_list:
-        return [_ai_rule_eval_basic(t) for t in text_list]
-    try:
-        prompt = (
-            "你是金融事件分析助手。請針對輸入的多則中文新聞/公告，逐則回傳 JSON 陣列 items，"
-            "每個元素包含：direction(-1|0|1), severity(1-5), horizon(短|中|長), "
-            "confidence(0~1), why(<=50字)。僅輸出 JSON 物件，鍵為 items。"
-        )
-        joined = [{"id": i, "text": t[:1000]} for i, t in enumerate(text_list)]
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": json.dumps(joined, ensure_ascii=False)},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            timeout=30,
-        )
-        raw = getattr(resp.choices[0].message, "content", "") or "{}"
-        obj = _safe_json_loads(raw) or {}
-        arr = obj.get("items")
-        if not isinstance(arr, list):
-            arr = obj if isinstance(obj, list) else None
-
-        out = []
-        for i, t in enumerate(text_list):
-            try:
-                d = arr[i] if (arr and i < len(arr)) else {}
-                out.append({
-                    "direction": int(d.get("direction", 0)),
-                    "severity": max(1, min(5, int(d.get("severity", 1)))),
-                    "horizon": str(d.get("horizon","短"))[:2],
-                    "confidence": max(0.0, min(1.0, float(d.get("confidence", 0.0)))),
-                    "why": str(d.get("why",""))[:100],
-                })
-            except Exception:
-                out.append(_ai_rule_eval_basic(t))
-        return out
-    except Exception as e:
-        print(f"[AI batch] error -> fallback single: {e}")
-        return [_ai_eval_one_event(t) for t in text_list]
-
-def _collect_events_for_ai(query: str, hours: int = 48, limit: int = 50):
-    try:
-        with app.test_request_context(f"/api/events?query={query}&hours={hours}&limit={limit}"):
-            resp = api_events()
-            try:
-                data = resp.get_json()
-            except AttributeError:
-                data = resp[0].get_json() if isinstance(resp, tuple) else {}
-    except Exception as e:
-        print(f"[_collect_events_for_ai] error: {e}")
-        data = {}
-    items = (data or {}).get("items", []) or []
-    debug = (data or {}).get("debug", []) or []
-    return items, debug
-
-# --------------------(ADD) AI Insight Endpoint --------------------
-@app.get("/api/ai/insight")
-@login_required
-def api_ai_insight_addon():
-    q = (request.args.get("query", "") or "").strip()
-    hours = int(request.args.get("hours", "48") or 48)
-    limit = int(request.args.get("limit", "20") or 20)  # 預設 20，速度更快
-    if not q:
-        return jsonify(success=False, message="請提供 query（股票代碼或關鍵字）"), 400
-
-    items, debug_log = _collect_events_for_ai(q, hours=hours, limit=limit)
-    if not items:
-        return jsonify(success=True, query=q, stock_score=0.0, n_events=0,
-                       risk_temp=0.0, uncertainty=1.0, items=[], top_items=[], debug=debug_log)
-
-    # 準備文字
-    texts = []
-    for ev in items:
-        title = str(ev.get("title") or "")
-        source = str(ev.get("source") or "")
-        tstamp = str(ev.get("time") or "")
-        texts.append(f"{title}（來源:{source} 時間:{tstamp}）")
-
-    # 規則先跑一輪，挑出需要 LLM 的
-    quick = [_ai_rule_eval_basic(t) for t in texts]
-    need_ai_idx = [i for i, info in enumerate(quick) if abs(_ai_event_score(info)) >= 1 or info["direction"] == 0]
-
-    # 批次送 LLM（每批 10）
-    batch_size = 10
-    for start in range(0, len(need_ai_idx), batch_size):
-        idxs = need_ai_idx[start:start+batch_size]
-        batch = [texts[i] for i in idxs]
-        results = _ai_eval_batch(batch)
-        for j, i in enumerate(idxs):
-            quick[i] = results[j]
-
-    # enriched
-    enriched = []
-    for ev, info in zip(items, quick):
-        ev_score = _ai_event_score(info)
-        enriched.append({**ev, **info, "event_score": ev_score})
-
-    # 聚合
-    num = den = 0.0
-    confs, sevs = [], []
-    for x in enriched:
-        w = max(0.1, min(5.0, abs(x["event_score"])))
-        num += x["event_score"] * w
-        den += w
-        confs.append(max(0.0, min(1.0, float(x.get("confidence", 0.0)))))
-        sevs.append(max(1, min(5, int(x.get("severity", 1)))))
-
-    stock_score = (num / den) if den > 0 else 0.0
-    risk_temp = (sum(sevs) / len(sevs) / 5.0) if sevs else 0.0
-    uncertainty = 1.0 - (sum(confs) / len(confs) if confs else 0.0)
-
-    # Top：正向/負向/次高
-    sorted_all = sorted(enriched, key=lambda z: abs(z["event_score"]), reverse=True)
-    top_pos = next((x for x in sorted_all if x["event_score"] > 0), None)
-    top_neg = next((x for x in sorted_all if x["event_score"] < 0), None)
-    chosen = {id(x) for x in [top_pos, top_neg] if x}
-    top_third = next((x for x in sorted_all if id(x) not in chosen), None)
-    top_items = [x for x in [top_pos, top_neg, top_third] if x is not None]
-
-    return jsonify(
-        success=True,
-        query=q,
-        stock_score=round(stock_score, 3),
-        n_events=len(enriched),
-        risk_temp=round(risk_temp, 3),
-        uncertainty=round(uncertainty, 3),
-        items=enriched,
+        stock_score=stock_score,
+        items=enriched_all,
         top_items=top_items,
         debug=debug_log
     )
-
-# --------------------(ADD) Streaming (SSE) --------------------
-@app.get("/api/ai/insight/stream")
-@login_required
-def api_ai_insight_stream():
-    q = (request.args.get("query","") or "").strip()
-    hours = int(request.args.get("hours","48") or 48)
-    limit = int(request.args.get("limit","20") or 20)
-    if not q:
-        return jsonify(success=False, message="缺少 query"), 400
-
-    def gen():
-        items, debug_log = _collect_events_for_ai(q, hours=hours, limit=limit)
-        yield f"data: {json.dumps({'type':'meta','total':len(items)})}\n\n"
-        if not items:
-            yield f"data: {json.dumps({'type':'done','stock_score':0.0,'top_items':[]})}\n\n"
-            return
-
-        texts = []
-        for ev in items:
-            title = str(ev.get("title") or "")
-            source = str(ev.get("source") or "")
-            tstamp = str(ev.get("time") or "")
-            texts.append(f"{title}（來源:{source} 時間:{tstamp}）")
-
-        quick = [_ai_rule_eval_basic(t) for t in texts]
-        need_ai_idx = [i for i, info in enumerate(quick) if abs(_ai_event_score(info)) >= 1 or info["direction"] == 0]
-
-        # 先把規則計分丟給前端（先看到畫面）
-        for i, ev in enumerate(items):
-            info = quick[i]
-            payload = {**ev, **info, "event_score": _ai_event_score(info)}
-            yield f"data: {json.dumps({'type':'item','index':i,'item':payload})}\n\n"
-
-        # 再批次提升需要 LLM 的
-        batch_size = 10
-        for start in range(0, len(need_ai_idx), batch_size):
-            idxs = need_ai_idx[start:start+batch_size]
-            results = _ai_eval_batch([texts[i] for i in idxs])
-            for j, i in enumerate(idxs):
-                quick[i] = results[j]
-                ev = items[i]
-                payload = {**ev, **quick[i], "event_score": _ai_event_score(quick[i])}
-                yield f"data: {json.dumps({'type':'update','index':i,'item':payload})}\n\n"
-
-        # 結算
-        enriched = [{**ev, **info, "event_score": _ai_event_score(info)} for ev, info in zip(items, quick)]
-        num = den = 0.0
-        for x in enriched:
-            w = max(0.1, min(5.0, abs(x["event_score"])))
-            num += x["event_score"] * w
-            den += w
-        stock_score = (num/den) if den>0 else 0.0
-        top_items = sorted(enriched, key=lambda z: abs(z["event_score"]), reverse=True)[:3]
-        yield f"data: {json.dumps({'type':'done','stock_score':round(stock_score,3),'top_items':top_items})}\n\n"
-
-    return Response(stream_with_context(gen()), mimetype="text/event-stream")
-
 
 
 
@@ -1224,3 +983,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 8000))  # Railway 會自動設定 PORT 環境變數
     app.run(host="0.0.0.0", port=port, debug=True)  # 允許外部訪問
+

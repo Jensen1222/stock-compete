@@ -47,9 +47,9 @@
 </div>
 
 
-<!-- 即時新聞／公告 -->
-<div class="card">
-  <h2>🚨 即時重大新聞 / 公告</h2>
+<!-- 📰 新聞AI洞察（合併版） -->
+<div class="card" id="newsAiSection">
+  <h2>📰 新聞AI洞察</h2>
 
   <!-- 輸入列 -->
   <div class="input-row">
@@ -62,55 +62,49 @@
     <button class="buy-btn" id="evBtn" type="button">查詢</button>
   </div>
 
-  <!-- 卡片列表 -->
-  <div id="evList"></div>
-  <!-- 第二次按：顯示全部（預設隱藏） -->
-  <button id="evShowAllBtn" class="buy-btn" style="display:none">顯示全部</button>
+  <!-- 新聞／公告清單（預設顯示 5 筆，更多由 JS 控制） -->
+  <ul id="evList" style="margin-top:10px;"></ul>
+
+  <!-- ───────── AI 洞察（統一路徑回傳）───────── -->
+  <div id="aiInsightCard" style="display:none; margin-top:14px;">
+    <h3 style="margin:0 0 8px;">🧠 AI 洞察</h3>
+
+    <!-- 分數條 + 總覽 -->
+    <div class="score-wrap" style="display:flex;align-items:center;gap:12px;">
+      <div id="score-bar">
+        <span id="score-fill"></span>
+      </div>
+      <div class="score-text small" style="min-width:200px;line-height:1.4;">
+        <strong>整體氛圍：</strong><span id="score-label">中性</span><br>
+        <strong>影響指數：</strong><span id="score-val">0.00</span>
+      </div>
+    </div>
+
+    <!-- Top 事件列表 -->
+    <div id="insight-top" style="margin-top:10px;display:grid;gap:8px;"></div>
+
+    <!-- AI 建議 -->
+    <div id="insight-note" class="small" style="margin-top:10px;"></div>
+
+    <!-- ℹ️ 說明按鈕 -->
+    <div id="insight-help" style="margin-top:10px;">
+      <button id="insight-help-toggle" class="buy-btn" type="button">ℹ️ 說明</button>
+    </div>
+
+    <!-- 規則說明（預設隱藏） -->
+    <div id="insight-rules">
+      <strong>影響指數</strong>：綜合「方向 × 強度 × 信心」，範圍 -5（強烈利空）～ +5（強烈利多）。
+      <ul style="margin:6px 0;padding-left:18px;" class="muted">
+        <li>≥ +2.0：偏多 → 可加碼或分批佈局</li>
+        <li>+0.8 ~ +2.0：偏正面 → 觀望或小倉位</li>
+        <li>-0.8 ~ +0.8：中性 → 保持觀望</li>
+        <li>-2.0 ~ -0.8：偏負面 → 減碼、保守</li>
+        <li>≤ -2.0：偏空 → 嚴設停損、降低曝險</li>
+      </ul>
+    </div>
+  </div>
 </div>
 
-<!-- 🧠 AI 洞察（改良版） -->
-<div class="card" id="aiInsightCard" style="display:none">
-  <h2>AI 洞察</h2>
-
-  <!-- 分數條 + 總覽 -->
-  <div class="score-wrap" style="display:flex;align-items:center;gap:12px;">
-    <div class="score-bar" style="flex:1;height:10px;background:#1f2937;border-radius:999px;overflow:hidden;">
-      <span id="score-fill" style="display:block;height:100%;width:0%;background:linear-gradient(90deg,#ef4444,#22c55e);"></span>
-    </div>
-    <div class="score-text" style="min-width:200px;color:#cbd5e1;line-height:1.4;">
-      <strong>整體氛圍：</strong><span id="score-label">中性</span><br>
-      <strong>影響指數：</strong><span id="score-val">0.00</span>
-    </div>
-  </div>
-
-  <!-- Top 事件列表 -->
-  <div id="insight-top" style="margin-top:10px;display:grid;gap:8px;"></div>
-
-  <!-- AI 建議 -->
-  <div id="insight-note" style="margin-top:10px;color:#94a3b8;font-size:.95rem;"></div>
-
-  <!-- ℹ️ 說明按鈕 -->
-  <div id="insight-help" style="margin-top:10px;">
-    <button id="insight-help-toggle" class="chip" 
-      style="background:#0b1220;border:1px solid #334155;color:#cbd5e1;cursor:pointer;">
-      ℹ️ 說明
-    </button>
-  </div>
-
-  <!-- 規則說明（預設隱藏） -->
-  <div id="insight-rules" 
-    style="display:none;margin-top:8px;padding:10px;border:1px dashed #334155;border-radius:10px;
-           background:#0b1220;color:#cbd5e1;font-size:13px;line-height:1.5;">
-    <strong>影響指數</strong>：綜合「方向 × 強度 × 信心」，範圍 -5（強烈利空）～ +5（強烈利多）。
-    <ul style="margin:6px 0;padding-left:18px;color:#94a3b8;">
-      <li>≥ +2.0：偏多 → 可加碼或分批佈局</li>
-      <li>+0.8 ~ +2.0：偏正面 → 觀望或小倉位</li>
-      <li>-0.8 ~ +0.8：中性 → 保持觀望</li>
-      <li>-2.0 ~ -0.8：偏負面 → 減碼、保守</li>
-      <li>≤ -2.0：偏空 → 嚴設停損、降低曝險</li>
-    </ul>
-  </div>
-</div>
 
 
 

@@ -404,92 +404,175 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   height: 44px;
   border-radius: 10px;
 }
-/* …後面 event-card、badge 的樣式照前一則複製… */
 
-/* === 即時新聞/公告 樣式調整 === */
-#evList a {
-  color: #ebeef1; /* 幾乎白色，對比清楚 */
-  text-decoration: none;
+/* ==========  新聞 基底（黑底主題） ========== */
+:root{
+  --bg: #0b1220;
+  --card: #0f172a;
+  --muted: #94a3b8;
+  --soft: #cbd5e1;
+  --border: #334155;
+  --accent: #93c5fd;  /* 藍色連結（較亮） */
+  --accent-hover: #bfdbfe;
+  --pos: #22c55e;
+  --neg: #ef4444;
 }
-#evList a:hover { text-decoration: underline; }
 
-.event-meta {
-  font-size: 12px;
-  color: #94a3b8;
-}
-
-/* 下拉選單深色＋右對齊 */
-#evHours {
-  background: #0f172a;
+html, body{
+  background: var(--bg);
   color: #e5e7eb;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 0 8px;
-  text-align: center;       /* 下拉選單內容置中 */
-  text-align-last: center; 
-}
-/* === AI 洞察卡片樣式（最終版）=== */
-#aiInsightCard .top-item {
-  padding: 10px;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  transition: background 0.2s ease;
-}
-#aiInsightCard .top-item:hover {
-  background: rgba(148, 163, 184, 0.08);
+  margin: 0;
+  padding: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial, "PingFang TC", "Microsoft JhengHei", sans-serif;
 }
 
-/* 連結樣式 */
-#aiInsightCard .top-item a {
-  color: #93c5fd;
-  text-decoration: none;
-  transition: all 0.2s ease;
-}
-#aiInsightCard .top-item a:hover {
-  filter: brightness(1.2);
-  text-decoration: underline;
+/* 常見容器卡片 */
+.card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
 }
 
-/* 分數條排版 */
-#aiInsightCard .score-wrap {
+/* 連結顏色更清楚 */
+a{ color: var(--accent); text-decoration: none; }
+a:hover{ color: var(--accent-hover); text-decoration: underline; }
+
+/* ========== 輸入群組 ========== */
+.input-group{ display: grid; gap: 8px; }
+.input-row{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+#evQuery, #evHours{
+  background: #0b1220;
+  color: #e5e7eb;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+}
+#evQuery:focus, #evHours:focus{ border-color: var(--accent); box-shadow: 0 0 0 3px rgba(147,197,253,0.2); }
+
+/* 讓 select 內容置中顯示 */
+#evHours{
+  text-align: center;
+  text-align-last: center;            /* Chrome/Edge */
+  -moz-text-align-last: center;       /* Firefox */
+}
+
+/* 下拉的選項樣式（可選） */
+#evHours option{
+  background: var(--card);
+  color: #e5e7eb;
+}
+
+/* ========== 按鈕樣式 ========== */
+.buy-btn, .sell-btn{
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .04s ease, background .2s ease, border-color .2s ease;
+}
+.buy-btn{ background: #0b2c1a; color: #d1fae5; border-color: #14532d; }
+.buy-btn:hover{ background: #104523; }
+.buy-btn:active{ transform: translateY(1px); }
+
+.sell-btn{ background: #2a0f13; color: #fecaca; border-color: #7f1d1d; }
+.sell-btn:hover{ background: #4a1518; }
+.sell-btn:active{ transform: translateY(1px); }
+
+.buy-btn:disabled, .sell-btn:disabled{
+  opacity: .5; cursor: not-allowed;
+}
+
+/* ========== 新聞清單 ========== */
+#evList{
+  margin: 10px 0 0;
+  padding-left: 18px; /* 保持清單縮排 */
+}
+#evList li{
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+/* 風險色（與 JS 呼應） */
+.ev-risk-pos{ color: var(--pos); }
+.ev-risk-neg{ color: var(--neg); }
+.ev-risk-neutral{ color: var(--soft); }
+
+/* 顯示更多/收起 控制列 */
+.ev-more-controls{
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
+  gap: 8px;
+  list-style: none;
+  margin-top: 8px;
 }
-#aiInsightCard .score-bar {
-  flex: 1;
+
+/* ========== AI 洞察卡 ========== */
+#aiInsightCard{
+  display: none;              /* JS 會顯示 */
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+/* 分數列 */
+#score-bar{
+  width: 100%;
   height: 10px;
-  background: #1f2937;
+  background: #111827;
+  border: 1px solid var(--border);
   border-radius: 999px;
   overflow: hidden;
-  min-width: 200px;
+  margin-top: 6px;
 }
-#aiInsightCard .score-text {
-  min-width: 200px;
-  color: #cbd5e1;
-  line-height: 1.4;
-}
-
-/* 分數條漸層顏色（紅到綠） */
-#aiInsightCard #score-fill {
-  display: block;
+#score-fill{
   height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #ef4444, #22c55e);
-  transition: width 0.8s ease;
+  width: 50%;                 /* JS 會更新成 0~100% */
+  background: linear-gradient(90deg, #ef4444, #eab308, #22c55e);
+  transition: width .25s ease;
 }
-/* === AI 洞察卡片樣式 === */
-#aiInsightCard .top-item {
-  padding: 10px;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  transition: background 0.2s ease;
-}
-#aiInsightCard .top-item:hover { background: rgba(148,163,184,0.08); }
-#aiInsightCard .top-item a { color:#93c5fd; text-decoration:none; transition:all .2s ease; }
-#aiInsightCard .top-item a:hover { filter:brightness(1.2); text-decoration:underline; }
 
-#aiInsightCard .score-wrap { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
-#aiInsightCard .score-bar { flex:1; min-width:200px; height:10px; background:#1f2937; border-radius:999px; overflow:hidden; }
-#score-fill { display:block; height:100%; width:0%; background:linear-gradient(90deg,#ef4444,#22c55e); transition:width .8s ease; }
+/* Top 事件卡 */
+#insight-top .top-item{
+  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 8px;
+}
+
+/* 說明區塊（可折疊） */
+#insight-rules{
+  display: none;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--muted);
+  background: #0a1326;
+}
+
+/* ========== 小細節可讀性 ========== */
+.muted{ color: var(--muted); }
+.small{ font-size: 12px; color: var(--muted); }
+
+/* 頁首帳號資訊（若有） */
+.account-info a{ color: var(--accent); }
+.account-info a:hover{ color: var(--accent-hover); }
+
+/* ========== 手機/小螢幕優化 ========== */
+@media (max-width: 1024px){
+  .input-row{ gap: 6px; }
+  #evQuery{ flex: 1 1 220px; min-width: 0; }
+  #evHours{ flex: 0 0 140px; }
+  .buy-btn, .sell-btn{ flex: 0 0 auto; }
+}
+
+@media (max-width: 480px){
+  #evHours{ width: 100%; }
+  .ev-more-controls{ flex-wrap: wrap; }
+}
