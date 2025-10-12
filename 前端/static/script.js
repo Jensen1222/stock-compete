@@ -581,21 +581,52 @@ function renderAiList(){
   }
 }
 
-/** 觸發 AI 洞察（SSE 邊算邊出） */
+/** 讓「說明」按鈕一定能開合（你的 HTML 已有 #insight-help-toggle / #insight-rules） */
+function bindInsightHelpOnce(){
+  const btn = document.getElementById('insight-help-toggle');
+  const box = document.getElementById('insight-rules');
+  if (btn && box && !btn.__bound){
+    btn.__bound = true;
+    btn.addEventListener('click', () => {
+      box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+    });
+  }
+}
+
+/** 觸發 AI 洞察（Top 區預設只顯示 5 則，含「顯示更多 / 收回」；不產生「全部事件」區） */
 async function loadInsightAddon(query){
   const hours = document.getElementById('evHours')?.value || 48;
 
-  const card      = ensureAiDom(); // 新增：確保需要的節點存在
-  const topBox    = document.getElementById('insight-top');
+  const card      = document.getElementById('aiInsightCard');
+  const topBox    = document.getElementById('insight-top');   // 你的 HTML 已有
   const note      = document.getElementById('insight-note');
   const scoreVal  = document.getElementById('score-val');
   const scoreLbl  = document.getElementById('score-label');
   const scoreFill = document.getElementById('score-fill');
-  const listEl    = document.getElementById('insight-list');
 
   if (!card) return;
 
-  // 🟡 載入階段：不要顯示「中性 / 0.00」，改為「分析中… / —」
+  // 讓「說明」按鈕可用
+  bindInsightHelpOnce();
+
+  // 🔧 準備「顯示更多 / 收回」控制列（若沒放就自動補上）
+  let ctrl = document.getElementById('insight-top-controls');
+  if (!ctrl){
+    ctrl = document.createElement('div');
+    ctrl.id = 'insight-top-controls';
+    ctrl.className = 'ev-more-controls';
+    ctrl.style.cssText = 'display:none; gap:8px; margin:10px 0;';
+    ctrl.innerHTML = `
+      <button type="button" class="buy-btn"  id="insight-top-more">顯示更多</button>
+      <button type="button" class="sell-btn" id="insight-top-collapse">收回</button>
+    `;
+    // 放在 Top 區塊下方
+    (topBox?.parentElement || card).appendChild(ctrl);
+  }
+  const moreBtn = document.getElementById('insight-top-more');
+  const colBtn  = document.getElementById('insight-top-collapse');
+
+  // 🟡 載入階段：顯示「分析中… / —」，避免閃「中性 / 0.00」
   card.style.display = 'block';
   if (topBox) topBox.innerHTML = '<div class="top-item">分析中…</div>';
   if (note) note.textContent = '';
@@ -603,18 +634,67 @@ async function loadInsightAddon(query){
   if (scoreLbl) scoreLbl.textContent = '分析中…';
   if (scoreFill) scoreFill.style.width = '50%';
 
-  // ⬇️ 重置 AI 清單狀態
-  aiItems = [];
-  aiExpanded = false;
-  if (listEl) listEl.innerHTML = '';
-  renderAiList(); // 先清空畫面
+  // 狀態：Top 區的串流項目 + 是否展開
+  const PAGE = 5;
+  let items = [];
+  let expanded = false;
+  const keys = new Set(); // 去重：title+source+time
 
-  // 使用 SSE；後端需已開啟 /api/ai/insight/stream 並允許 credentials
+  // 渲染 Top 區（依 expanded 控制顯示數量）
+  function renderTop(){
+    if (!topBox) return;
+
+    topBox.innerHTML = '';
+    const renderItems = expanded ? items : items.slice(0, PAGE);
+    renderItems.forEach((it, idx) => {
+      const color = it.direction > 0 ? '#22c55e' : it.direction < 0 ? '#ef4444' : '#9ca3af';
+      const el = document.createElement('div');
+      el.className = 'top-item';
+      el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
+      const score = Number(it.event_score || 0);
+      el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><strong>#${idx+1}</strong>
+            <span style="color:${color}">市場氛圍：${score >= 2 ? '偏多' : score >= 0.8 ? '偏正面' : score > -0.8 ? '中性' : score > -2 ? '偏負面' : '偏空'}</span> ·
+            <span>影響指數 ${(score>=0?'+':'')+score.toFixed(2)}</span>
+          </div>
+          ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
+        </div>
+        <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
+        <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
+        <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
+      `;
+      topBox.appendChild(el);
+    });
+
+    // 控制列狀態
+    if (items.length > PAGE) {
+      ctrl.style.display = 'flex';
+      if (moreBtn){
+        moreBtn.disabled = expanded;
+        moreBtn.textContent = expanded ? '已顯示全部' : '顯示更多';
+      }
+      if (colBtn){
+        colBtn.disabled = !expanded;
+      }
+    } else {
+      ctrl.style.display = 'none';
+    }
+  }
+
+  // 綁定顯示更多 / 收回
+  if (moreBtn && !moreBtn.__bound){
+    moreBtn.__bound = true;
+    moreBtn.addEventListener('click', () => { expanded = true; renderTop(); });
+  }
+  if (colBtn && !colBtn.__bound){
+    colBtn.__bound = true;
+    colBtn.addEventListener('click', () => { expanded = false; renderTop(); });
+  }
+
+  // 使用 SSE 串流
   const url = `/api/ai/insight/stream?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}&limit=50`;
   const es  = new EventSource(url, { withCredentials: true });
-
-  let idx = 0;
-  if (topBox) topBox.innerHTML = '';
 
   es.onmessage = (e) => {
     try {
@@ -623,55 +703,29 @@ async function loadInsightAddon(query){
       if (data.type === 'meta') return;
 
       if (data.type === 'item' || data.type === 'update') {
-        if (data.type === 'item') idx += 1;
-
         const it = data.item || {};
-        // === 同步 TOP 區（如同你原本）
-        if (topBox){
-          const color = it.direction > 0 ? '#22c55e' : it.direction < 0 ? '#ef4444' : '#9ca3af';
-          const el = document.createElement('div');
-          el.className = 'top-item';
-          el.style.cssText = 'padding:10px;border:1px solid #334155;border-radius:10px;';
-          const lab = scoreToLabelAndAdvice(Number(it.event_score||0)).label;
-
-          el.innerHTML = `
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <div><strong>#${idx}</strong>
-                <span style="color:${color}">市場氛圍：${lab}</span> ·
-                <span>影響指數 ${(it.event_score>=0?'+':'')+(Number(it.event_score||0)).toFixed(2)}</span>
-              </div>
-              ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
-            </div>
-            <div style="margin-top:6px;">${aiEscape(it.title||'')}</div>
-            <div style="margin-top:6px;font-size:12px;color:#94a3b8;">${aiEscape(it.source||'')} ${aiEscape(it.time||'')}</div>
-            <div style="margin-top:6px;color:#cbd5e1;">🤖 ${aiEscape(it.why||'')}</div>
-          `;
-          topBox.appendChild(el);
-        }
-
-        // === 累積到「全部事件」清單
-        // 用 title+source+time 當 key 去重
-        const key = `${it.title || ''}__${it.source || ''}__${it.time || ''}`;
-        if (!aiItems.__keys) aiItems.__keys = new Set();
-        if (!aiItems.__keys.has(key)){
-          aiItems.__keys.add(key);
-          aiItems.push(it);
-          // 邊收邊渲染（未展開狀態下，前 5 筆會即時顯示）
-          if (!aiExpanded) renderAiList();
+        // 去重，避免同一則重複
+        const k = `${it.title || ''}__${it.source || ''}__${it.time || ''}`;
+        if (!keys.has(k)){
+          keys.add(k);
+          items.push(it);
+          // 邊收邊畫：預設只會看到前 5 則，除非 expanded = true
+          renderTop();
         }
         return;
       }
 
       if (data.type === 'done') {
-        const s  = Number(data.stock_score || 0);
-        const sa = scoreToLabelAndAdvice(s);
+        const s = Number(data.stock_score || 0);
+        // 更新總分條
         if (scoreVal)  scoreVal.textContent  = (s >= 0 ? '+' : '') + s.toFixed(2);
-        if (scoreLbl)  scoreLbl.textContent  = sa.label;
+        if (scoreLbl)  scoreLbl.textContent  =
+          (s >= 2 ? '偏多' : s >= 0.8 ? '偏正面' : s > -0.8 ? '中性' : s > -2 ? '偏負面' : '偏空');
         if (scoreFill) scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s / 5) * 50)) + '%';
-        if (note) note.textContent = '建議：' + sa.advice;
-
-        // 完成後再確定一次清單與控制列
-        renderAiList();
+        if (note) note.textContent = '建議：' + (s >= 2 ? '可加碼或分批佈局' :
+                                                s >= 0.8 ? '觀望或小倉位' :
+                                                s > -0.8 ? '保持觀望' :
+                                                s > -2 ? '減碼、保守應對' : '嚴設停損、降低曝險');
         es.close();
         return;
       }
@@ -686,6 +740,7 @@ async function loadInsightAddon(query){
     if (note) note.textContent = '串流中斷或未登入，請重新查詢或先登入後再試';
   };
 }
+
 
 /** 綁定：查詢時同時更新 新聞 & AI（避免只更新其一） */
 window.addEventListener('DOMContentLoaded', () => {
