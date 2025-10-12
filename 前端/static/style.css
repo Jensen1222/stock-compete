@@ -406,133 +406,119 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
 }
 /* …後面 event-card、badge 的樣式照前一則複製… */
 
-/* === 即時新聞/公告 樣式調整 === */
-#evList a {
-  color: #ebeef1; /* 幾乎白色，對比清楚 */
-  text-decoration: none;
+/* === 即時新聞/公告 === */
+#evList a{
+  color:#ebeef1;
+  text-decoration:none;
 }
-#evList a:hover { text-decoration: underline; }
+#evList a:hover{ text-decoration:underline; }
 
-.event-meta {
-  font-size: 12px;
-  color: #94a3b8;
-}
+.event-meta{ font-size:12px; color:#94a3b8; }
 
-/* 下拉選單深色＋右對齊 */
-#evHours {
-  background: #0f172a;
-  color: #e5e7eb;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 0 8px;
-  text-align: center;       /* 下拉選單內容置中 */
-  text-align-last: center; 
-}
-/* === AI 洞察卡片樣式（最終版）=== */
-#aiInsightCard .top-item {
-  padding: 10px;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  transition: background 0.2s ease;
-}
-#aiInsightCard .top-item:hover {
-  background: rgba(148, 163, 184, 0.08);
+/* 下拉選單：深色 + 置中 */
+#evHours{
+  background:#0f172a;
+  color:#e5e7eb;
+  border:1px solid #1f2937;
+  border-radius:10px;
+  padding:0 8px;
+  text-align:center;
+  text-align-last:center; /* 部分瀏覽器支援 */
 }
 
-/* 連結樣式 */
-#aiInsightCard .top-item a {
-  color: #93c5fd;
-  text-decoration: none;
-  transition: all 0.2s ease;
+/* === AI 洞察卡片（乾淨去重版） === */
+#aiInsightCard .top-item{
+  padding:10px;
+  border:1px solid #334155;
+  border-radius:10px;
+  transition:background .2s ease;
 }
-#aiInsightCard .top-item a:hover {
-  filter: brightness(1.2);
-  text-decoration: underline;
+#aiInsightCard .top-item:hover{ background:rgba(148,163,184,.08); }
+
+/* 連結 */
+#aiInsightCard .top-item a{
+  color:#93c5fd;
+  text-decoration:none;
+  transition:all .2s ease;
+}
+#aiInsightCard .top-item a:hover{
+  filter:brightness(1.2);
+  text-decoration:underline;
 }
 
 /* 分數條排版 */
-#aiInsightCard .score-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
+#aiInsightCard .score-wrap{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  align-items:center;
 }
-#aiInsightCard .score-bar {
-  flex: 1;
-  height: 10px;
-  background: #1f2937;
-  border-radius: 999px;
-  overflow: hidden;
-  min-width: 200px;
+#aiInsightCard .score-bar{
+  flex:1;
+  min-width:200px;
+  height:10px;
+  background:#1f2937;
+  border-radius:999px;
+  overflow:hidden;
 }
-#aiInsightCard .score-text {
-  min-width: 200px;
-  color: #cbd5e1;
-  line-height: 1.4;
+#aiInsightCard .score-text{
+  min-width:200px;
+  color:#cbd5e1;
+  line-height:1.4;
+}
+/* 分數條漸層（用具體選擇器避免被別處覆蓋） */
+#aiInsightCard #score-fill{
+  display:block;
+  height:100%;
+  width:0%;
+  background:linear-gradient(90deg,#ef4444,#22c55e);
+  transition:width .8s ease;
 }
 
-/* 分數條漸層顏色（紅到綠） */
-#aiInsightCard #score-fill {
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #ef4444, #22c55e);
-  transition: width 0.8s ease;
-}
-/* === AI 洞察卡片樣式 === */
-#aiInsightCard .top-item {
-  padding: 10px;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  transition: background 0.2s ease;
-}
-#aiInsightCard .top-item:hover { background: rgba(148,163,184,0.08); }
-#aiInsightCard .top-item a { color:#93c5fd; text-decoration:none; transition:all .2s ease; }
-#aiInsightCard .top-item a:hover { filter:brightness(1.2); text-decoration:underline; }
-
-#aiInsightCard .score-wrap { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
-#aiInsightCard .score-bar { flex:1; min-width:200px; height:10px; background:#1f2937; border-radius:999px; overflow:hidden; }
-#score-fill { display:block; height:100%; width:0%; background:linear-gradient(90deg,#ef4444,#22c55e); transition:width .8s ease; }
-
-/* 線性外框（綠色：買入） */
+/* === 線性外框按鈕 === */
 .buy-btn{
-  background: transparent;
-  color: #86efac;                 /* 淺綠字 */
-  border: 1px solid #22c55e;      /* 綠色線框 */
-  border-radius: 12px;
-  padding: 10px 16px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: border-color .2s ease, color .2s ease, box-shadow .2s ease, transform .05s ease;
+  background:transparent;
+  color:#86efac;
+  border:1px solid #22c55e;
+  border-radius:12px;
+  padding:10px 16px;
+  font-weight:700;
+  cursor:pointer;
+  transition:border-color .2s ease, color .2s ease, box-shadow .2s ease, transform .05s ease;
 }
 .buy-btn:hover{
-  color: #d1fae5;
-  border-color: #34d399;
-  box-shadow: 0 0 0 3px rgba(34,197,94,.18);
+  color:#d1fae5;
+  border-color:#34d399;
+  box-shadow:0 0 0 3px rgba(34,197,94,.18);
 }
-.buy-btn:active{ transform: translateY(1px); }
-.buy-btn:focus-visible{ outline: none; box-shadow: 0 0 0 3px rgba(34,197,94,.35); }
+.buy-btn:active{ transform:translateY(1px); }
+.buy-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px rgba(34,197,94,.35); }
 .buy-btn:disabled{ opacity:.55; cursor:not-allowed; }
 
-/* 線性外框（紅色：賣出） */
 .sell-btn{
-  background: transparent;
-  color: #fecaca;                 /* 淺紅字 */
-  border: 1px solid #ef4444;      /* 紅色線框 */
-  border-radius: 12px;
-  padding: 10px 16px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: border-color .2s ease, color .2s ease, box-shadow .2s ease, transform .05s ease;
+  background:transparent;
+  color:#fecaca;
+  border:1px solid #ef4444;
+  border-radius:12px;
+  padding:10px 16px;
+  font-weight:700;
+  cursor:pointer;
+  transition:border-color .2s ease, color .2s ease, box-shadow .2s ease, transform .05s ease;
 }
 .sell-btn:hover{
-  color: #ffe4e6;
-  border-color: #f87171;
-  box-shadow: 0 0 0 3px rgba(239,68,68,.18);
+  color:#ffe4e6;
+  border-color:#f87171;
+  box-shadow:0 0 0 3px rgba(239,68,68,.18);
 }
-.sell-btn:active{ transform: translateY(1px); }
-.sell-btn:focus-visible{ outline: none; box-shadow: 0 0 0 3px rgba(239,68,68,.35); }
+.sell-btn:active{ transform:translateY(1px); }
+.sell-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px rgba(239,68,68,.35); }
 .sell-btn:disabled{ opacity:.55; cursor:not-allowed; }
 
-/* 顯示更多 / 收起 控制列（若尚未加入） */
-.ev-more-controls{ display:flex; gap:8px; list-style:none; margin-top:8px; }
+/* 顯示更多 / 收回 控制列 */
+.ev-more-controls{
+  display:flex /* !important */;  /* 若先前有被隱藏可去掉註解加上 !important */
+  gap:8px;
+  list-style:none;
+  margin-top:8px;
+}
+
