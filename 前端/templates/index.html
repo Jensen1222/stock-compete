@@ -47,80 +47,65 @@
 </div>
 
 
-<!-- 🔔 新聞 AI 洞察（HTML 版，與現有 JS 完全相容） -->
-<div class="card">
-  <h2>📰 新聞AI洞察</h2>
+<!-- 🧠 新聞AI洞察（只顯示 AI） -->
+<div class="card" id="newsAiSection">
+  <h2>新聞AI洞察</h2>
 
-  <!-- 查詢列（id 必須與你的 JS 一致） -->
-  <div class="input-row" style="margin-bottom:12px;display:flex;gap:12px;">
-    <input id="evQuery" type="text" placeholder="輸入代碼或關鍵字（例：2330 或 台積電）" />
+  <!-- 輸入列 -->
+  <div class="input-row">
+    <input type="text" id="evQuery" placeholder="輸入代碼或關鍵字（例：2330 或 台積電）" value="2330">
     <select id="evHours">
       <option value="24">近 24 小時</option>
       <option value="48" selected>近 48 小時</option>
       <option value="72">近 72 小時</option>
     </select>
-    <button id="evBtn" type="button" class="buy-btn">查詢</button>
+    <button class="buy-btn" id="evBtn" type="button">查詢</button>
   </div>
 
-  <!-- 新聞清單（你的 JS 會自動渲染＋顯示更多/收回） -->
-  <ul id="evList" style="margin:0;padding-left:18px;"></ul>
+  <!-- AI 洞察 -->
+  <div id="aiInsightCard" style="display:none; margin-top:14px;">
+    <!-- 總覽分數條 -->
+    <div class="score-wrap" style="display:flex;align-items:center;gap:12px;">
+      <div id="score-bar" style="flex:1;height:10px;background:#111827;border:1px solid #334155;border-radius:999px;overflow:hidden;">
+        <span id="score-fill" style="display:block;height:100%;width:50%;background:linear-gradient(90deg,#ef4444,#22c55e);"></span>
+      </div>
+      <div class="small" style="min-width:200px;line-height:1.4;">
+        <strong>整體氛圍：</strong><span id="score-label">—</span><br>
+        <strong>影響指數：</strong><span id="score-val">—</span>
+      </div>
+    </div>
+
+    <!-- Top 3（保留） -->
+    <div id="insight-top" style="margin-top:10px;display:grid;gap:8px;"></div>
+
+    <!-- 全部事件（可展開/收回） -->
+    <h3 style="margin:12px 0 6px;">全部事件</h3>
+    <ul id="insight-list" style="margin:0 0 0 18px;"></ul>
+    <div id="insight-controls" class="ev-more-controls" style="display:none; gap:8px; margin-top:8px;">
+      <button type="button" class="buy-btn" id="insight-more">顯示更多</button>
+      <button type="button" class="sell-btn" id="insight-collapse">收回</button>
+    </div>
+
+    <!-- 建議 -->
+    <div id="insight-note" class="small" style="margin-top:10px;"></div>
+
+    <!-- 說明 -->
+    <div style="margin-top:10px;">
+      <button id="insight-help-toggle" class="buy-btn" type="button">ℹ️ 說明</button>
+    </div>
+    <div id="insight-rules" style="display:none; margin-top:8px; padding:10px; border:1px dashed #334155; border-radius:10px;">
+      <strong>影響指數</strong>：方向 × 強度 × 信心（-5 ~ +5）。
+      <ul class="muted" style="margin:6px 0; padding-left:18px;">
+        <li>≥ +2.0：偏多 → 可加碼或分批佈局</li>
+        <li>+0.8 ~ +2.0：偏正面 → 觀望或小倉位</li>
+        <li>-0.8 ~ +0.8：中性 → 保持觀望</li>
+        <li>-2.0 ~ -0.8：偏負面 → 減碼、保守</li>
+        <li>≤ -2.0：偏空 → 嚴設停損、降低曝險</li>
+      </ul>
+    </div>
+  </div>
 </div>
 
-<!-- 🧠 AI 洞察卡片 -->
-<div class="card" id="aiInsightCard" style="display:block;">
-  <h2>新聞AI洞察</h2>
-
-  <!-- 整體分數條＋摘要（id 必須一致） -->
-  <div style="display:flex;align-items:center;gap:16px;margin:8px 0 12px;">
-    <div class="score-bar" style="flex:1;height:10px;background:#1f2937;border-radius:999px;overflow:hidden;min-width:200px;">
-      <span id="score-fill" style="display:block;height:100%;width:50%;background:linear-gradient(90deg,#ef4444,#22c55e);"></span>
-    </div>
-    <div class="score-text" style="min-width:220px;color:#cbd5e1;line-height:1.4;">
-      <div><strong>整體氛圍：</strong><span id="score-label">—</span></div>
-      <div><strong>影響指數：</strong><span id="score-val">—</span></div>
-    </div>
-  </div>
-
-  <!-- Top 事件（你的 JS 會填，預設只出 5 筆） -->
-  <div id="insight-top" style="display:grid;gap:8px;"></div>
-
-  <!-- Top 顯示更多/收回（你的 JS 會控制顯示/禁用） -->
-  <div id="insight-top-controls" class="ev-more-controls" style="display:none;gap:8px;margin:10px 0;">
-    <button type="button" class="buy-btn"  id="insight-top-more">顯示更多</button>
-    <button type="button" class="sell-btn" id="insight-top-collapse">收回</button>
-  </div>
-
-  <hr style="border:0;border-top:1px solid #334155;margin:12px 0;opacity:.6;" />
-
-  <!-- 全部事件（由 JS 逐筆累積） -->
-  <h3 style="margin:0 0 8px;">全部事件</h3>
-  <ul id="insight-list" style="margin:10px 0 0 18px;padding:0;"></ul>
-
-  <!-- 全部事件 顯示更多/收回（你的 JS 會控制） -->
-  <div id="insight-controls" class="ev-more-controls" style="display:flex;gap:8px;margin-top:8px;">
-    <button type="button" class="buy-btn"  id="insight-more">顯示更多</button>
-    <button type="button" class="sell-btn" id="insight-collapse">收回</button>
-  </div>
-
-  <!-- AI 建議 -->
-  <div id="insight-note" style="margin-top:10px;color:#94a3b8;font-size:.95rem;"></div>
-
-  <!-- 說明按鈕 + 內容（id 必須一致，JS 會綁定開合） -->
-  <div style="margin-top:12px;">
-    <button id="insight-help-toggle" class="buy-btn" type="button">ℹ️ 說明</button>
-  </div>
-  <div id="insight-rules"
-       style="display:none;margin-top:8px;padding:10px;border:1px dashed #334155;border-radius:10px;background:#0b1220;color:#cbd5e1;font-size:13px;line-height:1.5;">
-    <strong>影響指數</strong>：方向 × 強度 × 信心（-5 ~ +5）
-    <ul style="margin:6px 0;padding-left:18px;color:#94a3b8;">
-      <li>≥ +2.0：偏多 → 可加碼或分批佈局</li>
-      <li>+0.8 ~ +2.0：偏正面 → 觀望或小倉位</li>
-      <li>-0.8 ~ +0.8：中性 → 保持觀望</li>
-      <li>-2.0 ~ -0.8：偏負面 → 減碼、保守</li>
-      <li>≤ -2.0：偏空 → 嚴設停損、降低曝險</li>
-    </ul>
-  </div>
-</div>
 
 
 
