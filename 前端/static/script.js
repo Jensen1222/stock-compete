@@ -307,6 +307,7 @@ async function fetchEvents() {
 
   if (!q) return alert("請輸入代碼或關鍵字");
 
+  ensureListIsUL(); // 確保 #evList 是 <ul>
   list.innerHTML = `<li style="color:#94a3b8;">查詢中…</li>`;
   if (btn) btn.disabled = true;
 
@@ -333,7 +334,6 @@ async function fetchEvents() {
 
     const data = await res.json();
 
-    // debug 輸出（若後端有回傳）
     if (data.debug) console.log("[/api/events debug]", data.debug);
 
     if (!data.success) {
@@ -341,14 +341,13 @@ async function fetchEvents() {
       return;
     }
 
-    // 沒資料時顯示提示
     if (!data.items || data.items.length === 0) {
       list.innerHTML = `<li style="color:#94a3b8;">查無近期新聞/公告</li>`;
       return;
     }
 
-    // ✨ 一次取回全部，但初次只顯示 5 筆
-    renderEventsOnceThenAll(data.items, list);
+    // ✨ 一次取回全部，但初次只顯示 5 筆，可切換「顯示更多 / 收起」
+    renderEventsWithToggle(data.items, list);
   } catch (err) {
     console.error("fetchEvents error", err);
     list.innerHTML = `<li style="color:#ef4444;">⚠️ 查詢錯誤：${String(err.message || err)}</li>`;
@@ -357,41 +356,50 @@ async function fetchEvents() {
   }
 }
 
-// 初次渲染 5 筆，其餘在按鈕點擊後一次展開
-function renderEventsOnceThenAll(items, container) {
+// 渲染（可切換 顯示更多 / 收起）
+function renderEventsWithToggle(items, container) {
+  const EXPAND_KEY = "__expanded";
+  const expanded = container.dataset[EXPAND_KEY] === "1";
+
   container.innerHTML = "";
 
-  // 先顯示前 5 筆
-  const first = items.slice(0, 5);
-  first.forEach(it => container.appendChild(buildEventItem(it)));
+  const sliceEnd = expanded ? items.length : Math.min(5, items.length);
+  items.slice(0, sliceEnd).forEach(it => container.appendChild(buildEventItem(it)));
 
-  // 如果超過 5 筆，補一顆「顯示全部」按鈕
+  // 控制列
   if (items.length > 5) {
-    const btn = document.createElement("button");
-    btn.textContent = "顯示全部";
-    btn.className = "buy-btn";
-    btn.style.marginTop = "8px";
+    const ctrl = document.createElement("li");
+    ctrl.className = "ev-more-controls";
+    ctrl.style.listStyle = "none";
+    ctrl.style.marginTop = "8px";
+    ctrl.innerHTML = `
+      <button type="button" class="buy-btn" id="evToggleBtn">${expanded ? "收起" : "顯示更多"}</button>
+    `;
+    container.appendChild(ctrl);
 
-    btn.onclick = () => {
-      items.slice(5).forEach(it => container.appendChild(buildEventItem(it)));
-      btn.remove(); // 展開後隱藏按鈕
-    };
-
-    const wrap = document.createElement("li");
-    wrap.style.listStyle = "none";
-    wrap.appendChild(btn);
-    container.appendChild(wrap);
+    const toggleBtn = ctrl.querySelector("#evToggleBtn");
+    if (toggleBtn) {
+      toggleBtn.onclick = () => {
+        container.dataset[EXPAND_KEY] = expanded ? "0" : "1";
+        renderEventsWithToggle(items, container);
+      };
+    }
   }
 }
 
-// 建立單一列表項目
+// 建立單一列表項目（固定色票紅/綠）
 function buildEventItem(it) {
   const li = document.createElement("li");
   li.style.marginBottom = "6px";
+
+  const riskColor = it.risk === "negative" ? "#ef4444"
+                  : it.risk === "positive" ? "#22c55e"
+                  : "#cbd5e1";
+
   li.innerHTML = `
     <a href="${it.url}" target="_blank" style="text-decoration:none;">
       <strong>[${it.type === "announcement" ? "公告" : "新聞"}]</strong>
-      <span style="color:${it.risk === "negative" ? "red" : it.risk === "positive" ? "green" : "inherit"};">
+      <span style="color:${riskColor};">
         ${escapeHtml(it.title)}
       </span>
       <span style="font-size:12px;color:#94a3b8;">(${escapeHtml(it.source)} ${escapeHtml(it.time)})</span>
@@ -409,6 +417,20 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+// 確保 #evList 是 <ul>（避免 <div> + <li> 導致樣式出不來）
+function ensureListIsUL(){
+  const list = document.getElementById('evList');
+  if (!list) return;
+  if (list.tagName !== 'UL'){
+    const ul = document.createElement('ul');
+    ul.id = 'evList';
+    ul.className = list.className || '';
+    ul.style.cssText = list.style.cssText || '';
+    ul.innerHTML = list.innerHTML;
+    list.replaceWith(ul);
+  }
 }
 
 /* =========================
@@ -447,29 +469,33 @@ async function loadInsightAddon(query){
   const scoreFill = document.getElementById('score-fill');
 
   if (!card) return;
+
+  // 🟡 載入階段：不要顯示「中性 / 0.00」，改為「分析中… / —」
   card.style.display = 'block';
-  topBox.innerHTML = '<div class="top-item">分析中…</div>';
-  note.textContent = '';
+  if (topBox) topBox.innerHTML = '<div class="top-item">分析中…</div>';
+  if (note) note.textContent = '';
+  if (scoreVal) scoreVal.textContent = '—';
+  if (scoreLbl) scoreLbl.textContent = '分析中…';
+  if (scoreFill) scoreFill.style.width = '50%';
 
   // 使用 SSE；後端需已開啟 /api/ai/insight/stream 並允許 credentials
   const url = `/api/ai/insight/stream?query=${encodeURIComponent(query)}&hours=${encodeURIComponent(hours)}&limit=20`;
   const es  = new EventSource(url, { withCredentials: true });
 
   let idx = 0;
-  topBox.innerHTML = '';
+  if (topBox) topBox.innerHTML = '';
 
   es.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
 
-      if (data.type === 'meta') {
-        // 可選：顯示總則數 data.total
-        return;
-      }
+      if (data.type === 'meta') return;
 
       if (data.type === 'item' || data.type === 'update') {
+        if (!topBox) return;
         if (data.type === 'item') idx += 1;
-        const it = data.item;
+
+        const it = data.item || {};
         const color = it.direction > 0 ? '#22c55e' : it.direction < 0 ? '#ef4444' : '#9ca3af';
         const el = document.createElement('div');
         el.className = 'top-item';
@@ -480,7 +506,7 @@ async function loadInsightAddon(query){
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div><strong>#${idx}</strong>
               <span style="color:${color}">市場氛圍：${lab}</span> ·
-              <span>影響指數 ${(it.event_score>=0?'+':'')+(it.event_score||0).toFixed(2)}</span>
+              <span>影響指數 ${(it.event_score>=0?'+':'')+(Number(it.event_score||0)).toFixed(2)}</span>
             </div>
             ${it.url ? `<a href="${it.url}" target="_blank" style="color:#93c5fd;text-decoration:none;">連結</a>` : ''}
           </div>
@@ -495,10 +521,10 @@ async function loadInsightAddon(query){
       if (data.type === 'done') {
         const s  = Number(data.stock_score || 0);
         const sa = scoreToLabelAndAdvice(s);
-        scoreVal.textContent = (s >= 0 ? '+' : '') + s.toFixed(2);
-        scoreLbl.textContent = sa.label;
-        scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s / 5) * 50)) + '%';
-        note.textContent = '建議：' + sa.advice;
+        if (scoreVal)  scoreVal.textContent  = (s >= 0 ? '+' : '') + s.toFixed(2);
+        if (scoreLbl)  scoreLbl.textContent  = sa.label;
+        if (scoreFill) scoreFill.style.width = Math.max(0, Math.min(100, 50 + (s / 5) * 50)) + '%';
+        if (note) note.textContent = '建議：' + sa.advice;
         es.close();
         return;
       }
@@ -509,37 +535,28 @@ async function loadInsightAddon(query){
 
   es.onerror = () => {
     es.close();
-    note.textContent = '串流中斷或未登入，請重新查詢或先登入後再試';
+    if (topBox) topBox.innerHTML = '<div class="top-item">無法取得 AI 洞察</div>';
+    if (note) note.textContent = '串流中斷或未登入，請重新查詢或先登入後再試';
   };
 }
 
-/** 綁定：用查詢按鈕/Enter 觸發 AI 洞察（不動你的新聞查詢程式） */
+/** 綁定：查詢時同時更新 新聞 & AI（避免只更新其一） */
 window.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('evBtn');
   const qEl = document.getElementById('evQuery');
+  const hoursSel = document.getElementById('evHours');
 
-  if (btn) {
-    btn.addEventListener('click', () => {
-      const q = qEl?.value?.trim();
-      if (q) loadInsightAddon(q);
-    });
-  }
-  if (qEl) {
-    qEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const q = qEl.value?.trim();
-        if (q) loadInsightAddon(q);
-      }
-    });
+  if (qEl && !qEl.value) qEl.value = "2330";
+
+  function trigger() {
+    const q = qEl?.value?.trim();
+    if (!q) return;
+    fetchEvents();        // 新聞（含 顯示更多/收起）
+    loadInsightAddon(q);  // AI 洞察（避免先顯示 0.00）
   }
 
-  // 說明開關（若你的 HTML 有這兩個節點）
-  const toggleBtn = document.getElementById('insight-help-toggle');
-  const ruleBox   = document.getElementById('insight-rules');
-  if (toggleBtn && ruleBox){
-    toggleBtn.addEventListener('click', () => {
-      ruleBox.style.display =
-        (ruleBox.style.display === 'none' || !ruleBox.style.display) ? 'block' : 'none';
-    });
-  }
+  if (btn) btn.addEventListener('click', trigger);
+  if (qEl)  qEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') trigger(); });
+  if (hoursSel) hoursSel.addEventListener('change', trigger);
 });
+
