@@ -796,7 +796,7 @@ function renderQuote(q){
 // ==== 當日走勢：半小時概覽（簡化版） ====
 let ITD_STEP = 30;   // 30 -> 15 -> 10 -> 5 -> 1
 let _tl = [];
-
+let TL_META = {};
 async function loadTimeline(){
   const code = document.getElementById('itdCode')?.value.trim();
   if(!code) return alert('請輸入代碼');
@@ -817,6 +817,7 @@ async function loadTimeline(){
   }
 
   const m = data.meta || {};
+  TL_META = m;
   document.getElementById('itdMeta').textContent =
     `開盤 ${m.open ?? '-'}｜步長 ${m.step} 分｜筆數 ${m.count}`;
 
@@ -836,22 +837,41 @@ function renderTimeline(){
   const list = document.getElementById('itdList');
   if(!list) return;
   list.innerHTML = '';
+
   _tl.forEach((p, i) => {
-    // icon：開盤/收盤 ⦿；其他用 + / − / ±
     let icon = '±';
     if (p.kind === 'open' || p.kind === 'close') icon = '⦿';
-    else icon = (p.dir === 'up') ? '+' : (p.dir === 'down' ? '−' : '±'); // 注意這裡是全形負號 U+2212
+    else icon = (p.dir === 'up') ? '+' : (p.dir === 'down' ? '−' : '±'); // 注意是數學負號 U+2212
 
     const chg = (p.chg_from_open_pct == null) ? '-' : `${p.chg_from_open_pct}%`;
+
+    // 收盤徽註
+    const closeBadge = (p.kind === 'close') ? `<span style="margin-left:6px;opacity:.85">（收盤）</span>` : '';
+
+    // 開盤列附上 O/H/L/C
+    let ohlc = '';
+    if (i === 0){
+      const o = TL_META.open ?? '-';
+      const h = TL_META.high ?? '-';
+      const l = TL_META.low ?? '-';
+      const c = (TL_META.close == null) ? '—' : TL_META.close; // 盤中 C 不顯示或顯示 —
+      ohlc = `<div style="opacity:.75;margin-top:2px">O:${o}｜H:${h}｜L:${l}｜C:${c}</div>`;
+    }
+
     const li = document.createElement('li');
-    li.innerHTML = `<strong>${p.time}</strong> ${icon} ${p.price}
-      <span style="opacity:.75">（相對開盤 ${chg}）</span>`;
+    li.innerHTML = `
+      <strong>${p.time}</strong> ${icon} ${p.price}
+      <span style="opacity:.75">（相對開盤 ${chg}）</span>
+      ${closeBadge}
+      ${ohlc}
+    `;
     list.appendChild(li);
   });
 
   const mode = document.getElementById('itdMode');
   if (mode) mode.textContent = `模式：概覽 (${ITD_STEP} 分)`;
 }
+
 
 
 function itdMore(){

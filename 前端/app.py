@@ -1216,7 +1216,7 @@ def api_ai_insight_stream():
 
 
 
-
+# 當日股價變化概覽 
 
 try:
     from zoneinfo import ZoneInfo
@@ -1247,7 +1247,7 @@ def twse_last_price(code: str) -> float | None:
         r = requests.get(url, headers=headers, params=params, timeout=5)
         r.raise_for_status()
         arr = r.json().get("msgArray") or []
-        if not arr: 
+        if not arr:
             return None
         z = arr[0].get("z")
         return float(z) if z and z != "-" else None
@@ -1255,9 +1255,10 @@ def twse_last_price(code: str) -> float | None:
         return None
 
 @app.get("/api/intraday_timeline/<code>")
-@login_required   # 要開放未登入使用就拿掉
+@login_required  # 需要未登入也可用就移除這行
 def api_intraday_timeline(code):
-    """固定步長(step 分)當日概覽；預設 30 分一點；收盤用 TWSE 官價覆蓋"""
+    """固定步長(step 分)當日概覽；預設 30 分；收盤用 TWSE 官價覆蓋，並把最後一筆標記為 close"""
+    # step 驗證
     try:
         step = int(request.args.get("step", "30"))
     except Exception:
@@ -1269,14 +1270,23 @@ def api_intraday_timeline(code):
     if df.empty:
         return jsonify(success=False, message="no data"), 200
 
+    # 基本資訊
     open_px = float(df.iloc[0]["Open"] if pd.notna(df.iloc[0]["Open"]) else df.iloc[0]["Close"])
+    day_high = float(df["High"].max())
+    day_low  = float(df["Low"].min())
     day = df.iloc[0]["time"].date()
     t_start = datetime.combine(day, dtime(9, 0), tzinfo=TZ)
     t_end   = datetime.combine(day, dtime(13, 30), tzinfo=TZ)
-    now = datetime.now(TZ)
-    limit = min(now, t_end)  # 盤中只到現在；盤後到 13:30
 
-    # 09:00, 09:30, 10:00 ... 到 limit
+    # 是否已收盤：用「資料的最後時間」或「系統時間」雙判斷，避免時區/延遲誤判
+    df_last_ts = pd.to_datetime(df["time"]).max().to_pydatetime()
+    now = datetime.now(TZ)
+    market_closed = (df_last_ts >= t_end) or ((now.hour * 60 + now.minute) >= (13 * 60 + 31))
+
+    # 取到 limit
+    limit = t_end if market_closed else min(now, t_end)
+
+    # 生成 09:00, 09:30, ... 到 limit
     marks = []
     ts = t_start
     idx = 0
@@ -1289,12 +1299,12 @@ def api_intraday_timeline(code):
             "time": ts.strftime("%H:%M"),
             "price": round(px, 2),
             "chg_from_open_pct": round((px / open_px - 1) * 100, 2) if open_px else None,
-            "kind": "mid",   # 先預設；稍後標 open/close
-            "dir": "flat"    # 稍後再計算與前一點相比的方向
+            "kind": "mid",
+            "dir": "flat"
         })
         ts += timedelta(minutes=step)
 
-    # 設定開盤/方向
+    # 開盤標記 + 方向
     if marks:
         marks[0]["kind"] = "open"
         for i in range(1, len(marks)):
@@ -1302,21 +1312,27 @@ def api_intraday_timeline(code):
             cur  = marks[i]["price"]
             marks[i]["dir"] = "up" if cur > prev else ("down" if cur < prev else "flat")
 
-    # 盤後：用 TWSE 官價覆蓋最後一筆，並標為 close
-    is_closed = (now.hour * 60 + now.minute) >= (13 * 60 + 31)
-    if is_closed and marks:
-        last_official = twse_last_price(code)
-        if last_official is not None:
-            marks[-1]["price"] = round(last_official, 2)
-            marks[-1]["chg_from_open_pct"] = round((last_official / open_px - 1) * 100, 2) if open_px else None
-            # 重新計算最後一筆的方向
+    # 收盤：覆蓋最後一筆為官價 & 標記 close
+    official_close = None
+    if market_closed and marks:
+        official_close = twse_last_price(code)
+        if official_close is not None:
+            marks[-1]["price"] = round(official_close, 2)
+            marks[-1]["chg_from_open_pct"] = round((official_close / open_px - 1) * 100, 2) if open_px else None
             if len(marks) >= 2:
                 prev = marks[-2]["price"]
                 cur = marks[-1]["price"]
                 marks[-1]["dir"] = "up" if cur > prev else ("down" if cur < prev else "flat")
         marks[-1]["kind"] = "close"
 
-    meta = {"open": round(open_px, 2), "count": len(marks), "step": step}
+    meta = {
+        "open": round(open_px, 2),
+        "high": round(day_high, 2),
+        "low": round(day_low, 2),
+        "close": None if not market_closed else (round(official_close, 2) if official_close is not None else round(float(df.iloc[-1]["Close"]), 2)),
+        "count": len(marks),
+        "step": step
+    }
     return jsonify(success=True, symbol=code, meta=meta, marks=marks)
 
 
