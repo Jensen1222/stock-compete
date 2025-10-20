@@ -793,138 +793,68 @@ function renderQuote(q){
     </div>`;
 }
 
-/************ 當日走勢：概覽(固定步長) + 事件(門檻) ************/
-let ITD_VIEW = 'overview'; // 'overview' or 'events'
-let ITD_STEP = 30;         // 30 -> 15 -> 10 -> 5 -> 1
-let _tl = [];              // timeline marks
-let ITD_DETAIL = false;    // false=0.30% true=0.10%
-const ITD_PAGE = 40;       // 事件列表每次顯示 40
-let _itdFull = [];         // 全部事件
-let _itdShow = ITD_PAGE;   // 目前顯示到第幾則
+// ==== 當日走勢：半小時概覽（簡化版） ====
+let ITD_STEP = 30;   // 30 -> 15 -> 10 -> 5 -> 1
+let _tl = [];
 
-function toggleIntradayView(){
-  if (ITD_VIEW === 'overview'){
-    ITD_VIEW = 'events';
-    document.getElementById('itdToggleBtn').textContent = '返回概覽';
-    document.getElementById('itdMoreBtn').textContent = '顯示更多';
-    document.getElementById('itdLessBtn').style.display = 'none';
-    document.getElementById('itdMode').textContent = '模式：事件 (0.30% / 0.10%)';
-    loadIntradayEvents();
-  } else {
-    ITD_VIEW = 'overview';
-    ITD_STEP = 30;
-    document.getElementById('itdToggleBtn').textContent = '查看詳情';
-    document.getElementById('itdMode').textContent = '模式：概覽 (30 分)';
-    loadTimeline();
-  }
-}
-
-function toggleDetail(){
-  ITD_DETAIL = !ITD_DETAIL;
-  document.getElementById('itdDetailBtn').textContent = ITD_DETAIL ? '事件門檻：0.10%' : '事件門檻：0.30%';
-  if (ITD_VIEW === 'events') loadIntradayEvents();
-}
-
-/* 概覽 */
 async function loadTimeline(){
   const code = document.getElementById('itdCode')?.value.trim();
-  const ex = document.getElementById('rtEx')?.value.trim();
   if(!code) return alert('請輸入代碼');
-  const url = ex ? `/rt/api/intraday_timeline/${encodeURIComponent(code)}?step=${ITD_STEP}&ex=${ex}`
-                 : `/rt/api/intraday_timeline/${encodeURIComponent(code)}?step=${ITD_STEP}`;
-  const res = await fetch(url, { credentials: 'same-origin' });
-  const data = await res.json();
-  if(!data.success){
-    document.getElementById('itdMeta').textContent = '查詢失敗';
+
+  const url = `/api/intraday_timeline/${encodeURIComponent(code)}?step=${ITD_STEP}`;
+  let data;
+  try{
+    const res = await fetch(url, { credentials: 'same-origin' });
+    data = await res.json();
+  }catch(err){
+    console.error('timeline fetch error:', err);
+    return alert('連線失敗');
+  }
+  if(!data?.success){
+    document.getElementById('itdMeta').textContent = '查無資料';
     document.getElementById('itdList').innerHTML = '';
     return;
   }
+
   const m = data.meta || {};
-  document.getElementById('itdMeta').textContent = `開盤 ${m.open ?? '-'}｜步長 ${m.step} 分｜筆數 ${m.count}｜市場 ${m.ex || '-'}`;
+  document.getElementById('itdMeta').textContent =
+    `開盤 ${m.open ?? '-'}｜步長 ${m.step} 分｜筆數 ${m.count}`;
+
   _tl = data.marks || [];
   renderTimeline();
-  document.getElementById('itdMoreBtn').style.display = '';
-  document.getElementById('itdMoreBtn').textContent = (ITD_STEP === 1) ? '已最詳細' : '顯示更多';
-  document.getElementById('itdLessBtn').style.display = (ITD_STEP === 30) ? 'none' : '';
+
+  // 控制按鈕顯示
+  const moreBtn = document.getElementById('itdMoreBtn');
+  const lessBtn = document.getElementById('itdLessBtn');
+  if (moreBtn) moreBtn.style.display = '';
+  if (lessBtn) lessBtn.style.display = (ITD_STEP === 30 ? 'none' : '');
+  const mode = document.getElementById('itdMode');
+  if (mode) mode.textContent = `模式：概覽 (${ITD_STEP} 分)`;
 }
+
 function renderTimeline(){
-  const list = document.getElementById('itdList'); list.innerHTML = '';
+  const list = document.getElementById('itdList');
+  if(!list) return;
+  list.innerHTML = '';
   _tl.forEach(p => {
     const chg = (p.chg_from_open_pct == null) ? '-' : `${p.chg_from_open_pct}%`;
     const li = document.createElement('li');
-    li.innerHTML = `<strong>${p.time}</strong> ⦿ ${p.price} <span style="opacity:.75">（相對開盤 ${chg}）</span>`;
+    li.innerHTML = `<strong>${p.time}</strong> ⦿ ${p.price}
+      <span style="opacity:.75">（相對開盤 ${chg}）</span>`;
     list.appendChild(li);
   });
-  document.getElementById('itdMode').textContent = `模式：概覽 (${ITD_STEP} 分)`;
 }
+
 function itdMore(){
-  if (ITD_VIEW === 'overview'){
-    ITD_STEP = (ITD_STEP === 30) ? 15 : (ITD_STEP === 15) ? 10 : (ITD_STEP === 10) ? 5 : (ITD_STEP === 5) ? 1 : 1;
-    loadTimeline();
-  } else {
-    _itdShow = Math.min(_itdFull.length, _itdShow + ITD_PAGE);
-    _renderItdList();
-    document.getElementById('itdMoreBtn').style.display = (_itdFull.length > _itdShow) ? '' : 'none';
-    document.getElementById('itdLessBtn').style.display = (_itdFull.length > ITD_PAGE) ? '' : 'none';
-  }
+  ITD_STEP = (ITD_STEP === 30) ? 15
+           : (ITD_STEP === 15) ? 10
+           : (ITD_STEP === 10) ? 5
+           : (ITD_STEP === 5) ? 1
+           : 1;
+  loadTimeline();
 }
+
 function itdLess(){
-  if (ITD_VIEW === 'overview'){
-    ITD_STEP = 30; loadTimeline();
-  } else {
-    _itdShow = ITD_PAGE;
-    _renderItdList();
-    document.getElementById('itdMoreBtn').style.display = (_itdFull.length > _itdShow) ? '' : 'none';
-    document.getElementById('itdLessBtn').style.display = (_itdFull.length > ITD_PAGE) ? '' : 'none';
-  }
+  ITD_STEP = 30;
+  loadTimeline();
 }
-
-/* 事件 */
-function thresholdValue(){ return ITD_DETAIL ? 0.001 : 0.003; }
-async function loadIntradayEvents(){
-  const code = document.getElementById('itdCode')?.value.trim();
-  const ex = document.getElementById('rtEx')?.value.trim();
-  if(!code) return alert('請輸入代碼');
-  const url = ex ? `/rt/api/intraday_events/${encodeURIComponent(code)}?threshold=${thresholdValue()}&max=80&ex=${ex}`
-                 : `/rt/api/intraday_events/${encodeURIComponent(code)}?threshold=${thresholdValue()}&max=80`;
-  const res = await fetch(url, { credentials: 'same-origin' });
-  const data = await res.json();
-  if(!data.success){
-    document.getElementById('itdMeta').textContent = '查詢失敗';
-    document.getElementById('itdList').innerHTML = '';
-    return;
-  }
-  const m = data.meta || {};
-  document.getElementById('itdMeta').textContent =
-    `開盤 ${m.open ?? '-'}｜高 ${m.high ?? '-'}｜低 ${m.low ?? '-'}｜收盤 ${m.close ?? '-'}（分鐘K: ${m.bars ?? '-'})`;
-  _itdFull = data.events || [];
-  _itdShow = Math.min(ITD_PAGE, _itdFull.length);
-  _renderItdList();
-  document.getElementById('itdMoreBtn').style.display = (_itdFull.length > _itdShow) ? '' : 'none';
-  document.getElementById('itdLessBtn').style.display = (_itdFull.length > ITD_PAGE) ? '' : 'none';
-}
-function _renderItdList(){
-  const list = document.getElementById('itdList'); list.innerHTML = '';
-  const subset = _itdFull.slice(0, _itdShow);
-  subset.forEach(ev => {
-    const arrow = ev.direction === 'up' ? '↑' : (ev.direction === 'down' ? '↓' : (ev.direction === 'close' ? '⏹' : '•'));
-    const chgOpen = (ev.chg_from_open_pct == null) ? '-' : `${ev.chg_from_open_pct}%`;
-    const chgPrev = (ev.chg_from_prev_event_pct == null) ? '-' : `${ev.chg_from_prev_event_pct}%`;
-    const li = document.createElement('li');
-    li.innerHTML = `<strong>${ev.time}</strong> ${arrow} ${ev.price}
-      <span style="opacity:.75">（相對開盤 ${chgOpen}；相對上次事件 ${chgPrev}）</span>
-      <span style="opacity:.6">[${ev.reason}]</span>`;
-    list.appendChild(li);
-  });
-  document.getElementById('itdMode').textContent = `模式：事件 (${ITD_DETAIL ? '0.10%' : '0.30%'})`;
-}
-
-/* 初始：預設載入概覽(30分) */
-window.addEventListener('DOMContentLoaded', () => {
-  const codeEl = document.getElementById('itdCode');
-  if (codeEl && codeEl.value) {
-    ITD_VIEW = 'overview';
-    ITD_STEP = 30;
-    loadTimeline();
-  }
-});
