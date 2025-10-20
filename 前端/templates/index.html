@@ -145,17 +145,24 @@
 
 
 
+<!-- 📈 當日走勢（概覽） -->
 <div class="card">
   <h2>📈 當日走勢（概覽）</h2>
+
+  <!-- 同一列：輸入 + 載入 + 顯示更多/收起 -->
   <div class="input-row">
     <input id="itdCode" placeholder="輸入台股代碼（例：2330）" value="2330">
-    <button class="buy-btn" type="button" onclick="ITD_STEP=30; loadTimeline()">載入</button>
+    <button class="buy-btn btn-std" type="button" onclick="ITD_STEP=30; loadTimeline()">載入</button>
+    <button class="buy-btn btn-std" id="itdMoreBtn" type="button" onclick="itdMore()">顯示更多</button>
+    <button class="sell-btn btn-std" id="itdLessBtn" type="button" onclick="itdLess()" style="display:none">收起</button>
   </div>
-  <div class="input-row" style="gap:8px;margin-top:6px">
+
+  <!-- 模式說明 -->
+  <div class="input-row" style="margin-top:6px">
     <span id="itdMode" style="opacity:.8">模式：概覽 (30 分)</span>
-    <button class="buy-btn" id="itdMoreBtn" type="button" onclick="itdMore()">顯示更多</button>
-    <button class="sell-btn" id="itdLessBtn" type="button" onclick="itdLess()" style="display:none">收起</button>
   </div>
+
+  <!-- 資訊 + 列表 -->
   <div id="itdMeta" style="margin:6px 0; opacity:.85"></div>
   <ul id="itdList" class="event-list"></ul>
 </div>

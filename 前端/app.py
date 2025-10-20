@@ -1216,7 +1216,8 @@ def api_ai_insight_stream():
 
 
 
-# ==== Intraday Timeline (簡化版：.TW + 半小時概覽) ====
+
+
 try:
     from zoneinfo import ZoneInfo
     TZ = ZoneInfo("Asia/Taipei")
@@ -1225,7 +1226,7 @@ except Exception:
     TZ = pytz.timezone("Asia/Taipei")
 
 def yf_intraday_1m_tw(code: str) -> pd.DataFrame:
-    """yfinance 取當日 1 分鐘線（固定 .TW，不做上市/上櫃偵測）"""
+    """yfinance 取當日 1 分鐘線（固定 .TW）"""
     t = yf.Ticker(f"{code}.TW")
     df = t.history(period="1d", interval="1m", actions=False, auto_adjust=False)
     if df is None or df.empty:
@@ -1237,10 +1238,26 @@ def yf_intraday_1m_tw(code: str) -> pd.DataFrame:
     df = df.rename_axis("time").reset_index()
     return df[["time", "Open", "High", "Low", "Close", "Volume"]]
 
+def twse_last_price(code: str) -> float | None:
+    """TWSE MIS 官價（最後成交）"""
+    url = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://mis.twse.com.tw/stock/index.jsp"}
+    params = {"ex_ch": f"tse_{code}.tw", "json": "1"}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=5)
+        r.raise_for_status()
+        arr = r.json().get("msgArray") or []
+        if not arr: 
+            return None
+        z = arr[0].get("z")
+        return float(z) if z and z != "-" else None
+    except Exception:
+        return None
+
 @app.get("/api/intraday_timeline/<code>")
-@login_required  # 若你此路由要開放未登入使用，可把這行拿掉
+@login_required   # 要開放未登入使用就拿掉
 def api_intraday_timeline(code):
-    """固定步長(step 分)的當日概覽；預設 30 分一點"""
+    """固定步長(step 分)當日概覽；預設 30 分一點；收盤用 TWSE 官價覆蓋"""
     try:
         step = int(request.args.get("step", "30"))
     except Exception:
@@ -1254,30 +1271,50 @@ def api_intraday_timeline(code):
 
     open_px = float(df.iloc[0]["Open"] if pd.notna(df.iloc[0]["Open"]) else df.iloc[0]["Close"])
     day = df.iloc[0]["time"].date()
-
     t_start = datetime.combine(day, dtime(9, 0), tzinfo=TZ)
     t_end   = datetime.combine(day, dtime(13, 30), tzinfo=TZ)
-
     now = datetime.now(TZ)
-    limit = min(now, t_end)  # 盤中只到目前；盤後到 13:30
+    limit = min(now, t_end)  # 盤中只到現在；盤後到 13:30
 
-    # 生成 09:00, 09:30, 10:00 ... 到 limit
+    # 09:00, 09:30, 10:00 ... 到 limit
     marks = []
     ts = t_start
     idx = 0
     n = len(df)
     while ts <= limit and idx < n:
-        # 找到 <= ts 的最後一根
         while idx + 1 < n and df.iloc[idx + 1]["time"] <= ts:
             idx += 1
-        row = df.iloc[idx]
-        px = float(row["Close"])
+        px = float(df.iloc[idx]["Close"])
         marks.append({
             "time": ts.strftime("%H:%M"),
             "price": round(px, 2),
-            "chg_from_open_pct": round((px / open_px - 1) * 100, 2) if open_px else None
+            "chg_from_open_pct": round((px / open_px - 1) * 100, 2) if open_px else None,
+            "kind": "mid",   # 先預設；稍後標 open/close
+            "dir": "flat"    # 稍後再計算與前一點相比的方向
         })
         ts += timedelta(minutes=step)
+
+    # 設定開盤/方向
+    if marks:
+        marks[0]["kind"] = "open"
+        for i in range(1, len(marks)):
+            prev = marks[i-1]["price"]
+            cur  = marks[i]["price"]
+            marks[i]["dir"] = "up" if cur > prev else ("down" if cur < prev else "flat")
+
+    # 盤後：用 TWSE 官價覆蓋最後一筆，並標為 close
+    is_closed = (now.hour * 60 + now.minute) >= (13 * 60 + 31)
+    if is_closed and marks:
+        last_official = twse_last_price(code)
+        if last_official is not None:
+            marks[-1]["price"] = round(last_official, 2)
+            marks[-1]["chg_from_open_pct"] = round((last_official / open_px - 1) * 100, 2) if open_px else None
+            # 重新計算最後一筆的方向
+            if len(marks) >= 2:
+                prev = marks[-2]["price"]
+                cur = marks[-1]["price"]
+                marks[-1]["dir"] = "up" if cur > prev else ("down" if cur < prev else "flat")
+        marks[-1]["kind"] = "close"
 
     meta = {"open": round(open_px, 2), "count": len(marks), "step": step}
     return jsonify(success=True, symbol=code, meta=meta, marks=marks)

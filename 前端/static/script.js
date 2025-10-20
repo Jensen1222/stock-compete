@@ -836,14 +836,23 @@ function renderTimeline(){
   const list = document.getElementById('itdList');
   if(!list) return;
   list.innerHTML = '';
-  _tl.forEach(p => {
+  _tl.forEach((p, i) => {
+    // icon：開盤/收盤 ⦿；其他用 + / − / ±
+    let icon = '±';
+    if (p.kind === 'open' || p.kind === 'close') icon = '⦿';
+    else icon = (p.dir === 'up') ? '+' : (p.dir === 'down' ? '−' : '±'); // 注意這裡是全形負號 U+2212
+
     const chg = (p.chg_from_open_pct == null) ? '-' : `${p.chg_from_open_pct}%`;
     const li = document.createElement('li');
-    li.innerHTML = `<strong>${p.time}</strong> ⦿ ${p.price}
+    li.innerHTML = `<strong>${p.time}</strong> ${icon} ${p.price}
       <span style="opacity:.75">（相對開盤 ${chg}）</span>`;
     list.appendChild(li);
   });
+
+  const mode = document.getElementById('itdMode');
+  if (mode) mode.textContent = `模式：概覽 (${ITD_STEP} 分)`;
 }
+
 
 function itdMore(){
   ITD_STEP = (ITD_STEP === 30) ? 15
