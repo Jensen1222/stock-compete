@@ -145,21 +145,33 @@
 
 
 
-  <!-- 📈 當日走勢事件（可切換 0.30% / 0.10%） -->
+<!-- 📈 即時股價 + 當日走勢（概覽 / 事件） -->
 <div class="card">
-  <h2>📈 當日走勢事件</h2>
+  <h2>📈 當日股價走勢</h2>
+
   <div class="input-row">
     <input id="itdCode" placeholder="輸入台股代碼（例：2330）" value="2330">
-    <button class="buy-btn" type="button" onclick="loadIntradayEvents()">載入</button>
-    <button class="sell-btn" id="itdToggleBtn" type="button" onclick="toggleIntradayDetail()">查看詳情</button>
-    <span id="itdMode" style="opacity:.8">模式：精簡 (0.30%)</span>
+    <select id="rtEx">
+      <option value="">自動</option>
+      <option value="tse">上市 (TSE)</option>
+      <option value="otc">上櫃 (OTC)</option>
+    </select>
+    <button class="buy-btn" type="button" onclick="startRtStream()">開始追蹤</button>
+    <button class="sell-btn" type="button" onclick="stopRtStream()">停止</button>
   </div>
+
+  <div id="rtPrice" class="ticker" style="margin:6px 0;"></div>
+
+  <div class="input-row" style="margin-top:6px">
+    <button class="buy-btn" id="itdToggleBtn" type="button" onclick="toggleIntradayView()">查看詳情</button>
+    <span id="itdMode" style="opacity:.8">模式：概覽 (30 分)</span>
+    <button class="buy-btn" id="itdMoreBtn" type="button" onclick="itdMore()">顯示更多</button>
+    <button class="sell-btn" id="itdLessBtn" type="button" onclick="itdLess()" style="display:none">收起</button>
+    <button class="buy-btn" id="itdDetailBtn" type="button" onclick="toggleDetail()">事件門檻：0.30%</button>
+  </div>
+
   <div id="itdMeta" style="margin:6px 0; opacity:.85"></div>
   <ul id="itdList" class="event-list"></ul>
-  <div style="margin-top:8px">
-    <button class="buy-btn" id="itdMoreBtn" type="button" style="display:none" onclick="itdMore()">顯示更多</button>
-    <button class="sell-btn" id="itdLessBtn" type="button" style="display:none" onclick="itdLess()">收起</button>
-  </div>
 </div>
 
 
