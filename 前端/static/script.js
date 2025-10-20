@@ -762,3 +762,77 @@ window.addEventListener('DOMContentLoaded', () => {
   if (hoursSel) hoursSel.addEventListener('change', trigger);
 });
 
+// ===== 當日走勢事件（itd*：intraday） =====
+let ITD_DETAIL = false;        // false=0.30% 精簡, true=0.10% 詳盡
+const ITD_PAGE = 40;           // 一次渲染 40 則，更多用「顯示更多」
+let _itdFull = [];             // 全部事件（由 API 回傳）
+let _itdShow = ITD_PAGE;       // 目前顯示到第幾則
+
+function _itdThreshold() { return ITD_DETAIL ? 0.001 : 0.003; }
+
+function toggleIntradayDetail(){
+  ITD_DETAIL = !ITD_DETAIL;
+  document.getElementById('itdToggleBtn').textContent = ITD_DETAIL ? '返回精簡' : '查看詳情';
+  document.getElementById('itdMode').textContent = ITD_DETAIL ? '模式：詳盡 (0.10%)' : '模式：精簡 (0.30%)';
+  loadIntradayEvents();
+}
+
+async function loadIntradayEvents(){
+  const code = document.getElementById('itdCode')?.value.trim();
+  if(!code) return alert('請輸入代碼');
+
+  const url = `/api/intraday_events/${encodeURIComponent(code)}?threshold=${_itdThreshold()}&max=80`;
+  try{
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const data = await res.json();
+    if(!data.success){
+      document.getElementById('itdMeta').textContent = '查詢失敗';
+      document.getElementById('itdList').innerHTML = '';
+      return;
+    }
+
+    const m = data.meta || {};
+    document.getElementById('itdMeta').textContent =
+      `開盤 ${m?.open ?? '-'}｜高 ${m?.high ?? '-'}｜低 ${m?.low ?? '-'}｜收盤 ${m?.close ?? '-'}（分鐘K: ${m?.bars ?? '-'}）`;
+
+    _itdFull = data.events || [];
+    _itdShow = Math.min(ITD_PAGE, _itdFull.length);
+    _renderItdList();
+
+    document.getElementById('itdMoreBtn').style.display = (_itdFull.length > _itdShow) ? '' : 'none';
+    document.getElementById('itdLessBtn').style.display = (_itdFull.length > ITD_PAGE) ? '' : 'none';
+  }catch(err){
+    console.error('intraday events error', err);
+    alert('取得當日走勢事件失敗');
+  }
+}
+
+function _renderItdList(){
+  const list = document.getElementById('itdList');
+  list.innerHTML = '';
+  const subset = _itdFull.slice(0, _itdShow);
+  subset.forEach(ev => {
+    const li = document.createElement('li');
+    const arrow = ev.direction === 'up' ? '↑' : (ev.direction === 'down' ? '↓' : '⏹');
+    const chgOpen = (ev.chg_from_open_pct == null) ? '-' : `${ev.chg_from_open_pct}%`;
+    const chgPrev = (ev.chg_from_prev_event_pct == null) ? '-' : `${ev.chg_from_prev_event_pct}%`;
+    li.innerHTML = `<strong>${ev.time}</strong> ${arrow} ${ev.price}
+      <span style="opacity:.75">（相對開盤 ${chgOpen}；相對上次事件 ${chgPrev}）</span>
+      <span style="opacity:.6">[${ev.reason}]</span>`;
+    list.appendChild(li);
+  });
+}
+
+function itdMore(){
+  _itdShow = Math.min(_itdFull.length, _itdShow + ITD_PAGE);
+  _renderItdList();
+  document.getElementById('itdMoreBtn').style.display = (_itdFull.length > _itdShow) ? '' : 'none';
+  document.getElementById('itdLessBtn').style.display = (_itdFull.length > ITD_PAGE) ? '' : 'none';
+}
+
+function itdLess(){
+  _itdShow = ITD_PAGE;
+  _renderItdList();
+  document.getElementById('itdMoreBtn').style.display = (_itdFull.length > _itdShow) ? '' : 'none';
+  document.getElementById('itdLessBtn').style.display = (_itdFull.length > ITD_PAGE) ? '' : 'none';
+}

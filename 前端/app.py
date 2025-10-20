@@ -26,6 +26,7 @@ from typing import Optional
 from email.utils import parsedate_to_datetime
 import json
 from concurrent.futures import ThreadPoolExecutor
+from zoneinfo import ZoneInfo
 
 # 載入 .env 檔案
 load_dotenv()
@@ -1214,6 +1215,120 @@ def api_ai_insight_stream():
 
 
 
+# ====== 當日分鐘線 → 事件流（0.30%/0.10% 可切換） ======
+
+TZ = ZoneInfo("Asia/Taipei")
+
+def yf_intraday_1m_tw(code: str) -> pd.DataFrame:
+    """
+    取台股當日 1 分鐘線（yfinance），欄位：time, Open, High, Low, Close, Volume
+    """
+    t = yf.Ticker(f"{code}.TW")
+    df = t.history(period="1d", interval="1m", actions=False, auto_adjust=False)
+    if df is None or df.empty:
+        return pd.DataFrame()
+    # 轉台北時間（若已帶 tz 就直接轉；若無 tz 就假設 UTC 後轉）
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC").tz_convert(TZ)
+    else:
+        df.index = df.index.tz_convert(TZ)
+    df = df.rename_axis("time").reset_index()
+    return df[["time", "Open", "High", "Low", "Close", "Volume"]]
+
+def _pct(a, b):
+    return None if (a is None or b in (None, 0)) else (a / b - 1.0)
+
+def compute_intraday_events(df: pd.DataFrame, threshold: float, max_events: int = 120):
+    """
+    由分鐘線產生事件：
+    - 相對「上一個事件價」變動達門檻 → 記一則
+    - 創當日新高/新低 → 記一則
+    - 收盤 → 補一則
+    """
+    events = []
+    if df.empty:
+        return events, None
+
+    # 開盤價：優先用 Open，沒有就用 Close
+    open_px = float(df.iloc[0]["Open"] if pd.notna(df.iloc[0]["Open"]) else df.iloc[0]["Close"])
+    last_event_px = open_px
+    day_high = open_px
+    day_low = open_px
+
+    for _, row in df.iterrows():
+        ts = row["time"]
+        px = float(row["Close"])
+
+        trig_new_high = px > day_high
+        trig_new_low = px < day_low
+        dp = _pct(px, last_event_px)
+        trig_thresh = (dp is not None and abs(dp) >= threshold)
+
+        reason = []
+        if trig_new_high:
+            day_high = px
+            reason.append("newHigh")
+        if trig_new_low:
+            day_low = px
+            reason.append("newLow")
+        if trig_thresh:
+            reason.append("threshold")
+
+        if reason:
+            direction = "up" if px >= last_event_px else "down"
+            events.append({
+                "time": ts.strftime("%H:%M"),
+                "price": round(px, 2),
+                "direction": direction,
+                "chg_from_open_pct": None if open_px in (None, 0) else round((px / open_px - 1) * 100, 2),
+                "chg_from_prev_event_pct": None if last_event_px in (None, 0) else round((px / last_event_px - 1) * 100, 2),
+                "reason": "|".join(reason)
+            })
+            last_event_px = px
+
+        if len(events) >= max_events:
+            break
+
+    # 收盤事件（最後一根）
+    last_row = df.iloc[-1]
+    close_px = float(last_row["Close"])
+    events.append({
+        "time": last_row["time"].strftime("%H:%M"),
+        "price": round(close_px, 2),
+        "direction": "close",
+        "chg_from_open_pct": round((close_px / open_px - 1) * 100, 2) if open_px else None,
+        "chg_from_prev_event_pct": round((close_px / last_event_px - 1) * 100, 2) if last_event_px else None,
+        "reason": "close"
+    })
+
+    meta = {
+        "open": round(open_px, 2),
+        "high": round(max(day_high, open_px), 2),
+        "low": round(min(day_low, open_px), 2),
+        "close": round(close_px, 2),
+        "bars": int(len(df)),
+    }
+    return events, meta
+
+@app.get("/api/intraday_events/<code>")
+@login_required
+def api_intraday_events(code):
+    """
+    /api/intraday_events/2330?threshold=0.003&max=80
+    threshold：0.003=0.30%（預設）；0.001=0.10%
+    max：伺服器端硬上限，避免回太多
+    """
+    try:
+        threshold = float(request.args.get("threshold", "0.003"))
+        max_events = int(request.args.get("max", "80"))
+    except Exception:
+        return jsonify(success=False, message="bad params"), 400
+
+    df = yf_intraday_1m_tw(code)
+    events, meta = compute_intraday_events(df, threshold, max_events=max_events)
+
+    return jsonify(success=True, symbol=code, threshold=threshold, max_events=max_events,
+                   meta=meta, events=events)
 
 
 

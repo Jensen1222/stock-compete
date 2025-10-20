@@ -145,6 +145,24 @@
 
 
 
+  <!-- 📈 當日走勢事件（可切換 0.30% / 0.10%） -->
+<div class="card">
+  <h2>📈 當日走勢事件</h2>
+  <div class="input-row">
+    <input id="itdCode" placeholder="輸入台股代碼（例：2330）" value="2330">
+    <button class="buy-btn" type="button" onclick="loadIntradayEvents()">載入</button>
+    <button class="sell-btn" id="itdToggleBtn" type="button" onclick="toggleIntradayDetail()">查看詳情</button>
+    <span id="itdMode" style="opacity:.8">模式：精簡 (0.30%)</span>
+  </div>
+  <div id="itdMeta" style="margin:6px 0; opacity:.85"></div>
+  <ul id="itdList" class="event-list"></ul>
+  <div style="margin-top:8px">
+    <button class="buy-btn" id="itdMoreBtn" type="button" style="display:none" onclick="itdMore()">顯示更多</button>
+    <button class="sell-btn" id="itdLessBtn" type="button" style="display:none" onclick="itdLess()">收起</button>
+  </div>
+</div>
+
+
   <!-- ✅ 股票查詢與趨勢圖 -->
   <div class="card chart-card"> <!-- ADD: chart-card -->
     <h2>📈 股票查詢與趨勢圖</h2>
