@@ -522,5 +522,6 @@ img, canvas, video, svg { max-width: 100%; height: auto; display: block; }
   margin-top:8px;
 }
 
+.ticker { padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.04); }
 .event-list { list-style: none; padding-left: 0; display: grid; gap: 6px; }
 .event-list li { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.04); }

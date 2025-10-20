@@ -1215,122 +1215,255 @@ def api_ai_insight_stream():
 
 
 
-# ====== 當日分鐘線 → 事件流（0.30%/0.10% 可切換） ======
+# === Realtime (inline) BEGIN ===
+# 時區
+try:
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo("Asia/Taipei")
+except Exception:
+    import pytz
+    TZ = pytz.timezone("Asia/Taipei")
 
-TZ = ZoneInfo("Asia/Taipei")
+rt_bp = Blueprint("rt", __name__)
 
-def yf_intraday_1m_tw(code: str) -> pd.DataFrame:
-    """
-    取台股當日 1 分鐘線（yfinance），欄位：time, Open, High, Low, Close, Volume
-    """
-    t = yf.Ticker(f"{code}.TW")
+# ---- TWSE MIS / 上市上櫃偵測 ----
+def _twse_mis_info(code: str, ex: str) -> dict | None:
+    url = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://mis.twse.com.tw/stock/index.jsp"}
+    params = {"ex_ch": f"{ex}_{code}.tw", "json": "1"}
+    r = requests.get(url, headers=headers, params=params, timeout=5)
+    r.raise_for_status()
+    arr = r.json().get("msgArray") or []
+    return arr[0] if arr else None
+
+def detect_exchange(code: str) -> str | None:
+    for ex in ("tse", "otc"):
+        if _twse_mis_info(code, ex):
+            return ex
+    return None
+
+def twse_last_price(code: str, ex_hint: str | None = None) -> float | None:
+    ex = ex_hint or detect_exchange(code) or "tse"
+    info = _twse_mis_info(code, ex)
+    if not info: return None
+    z = info.get("z")
+    try:
+        return float(z) if z and z != "-" else None
+    except Exception:
+        return None
+
+def yf_symbol(code: str, ex: str | None) -> str:
+    return f"{code}.TW" if ex == "tse" else f"{code}.TWO"
+
+# ---- yfinance 當日 1m ----
+def yf_intraday_1m(code: str, ex_hint: str | None = None) -> tuple[pd.DataFrame, str | None]:
+    ex = ex_hint or detect_exchange(code) or "tse"
+    sym = yf_symbol(code, ex)
+    t = yf.Ticker(sym)
     df = t.history(period="1d", interval="1m", actions=False, auto_adjust=False)
     if df is None or df.empty:
-        return pd.DataFrame()
-    # 轉台北時間（若已帶 tz 就直接轉；若無 tz 就假設 UTC 後轉）
+        return pd.DataFrame(), ex
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC").tz_convert(TZ)
     else:
         df.index = df.index.tz_convert(TZ)
     df = df.rename_axis("time").reset_index()
-    return df[["time", "Open", "High", "Low", "Close", "Volume"]]
+    return df[["time", "Open", "High", "Low", "Close", "Volume"]], ex
 
+# ---- 即時價：優先 TWSE MIS，失敗用 yfinance ----
+def _f(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+def get_quote(code: str, ex_hint: str | None = None) -> dict:
+    ex = ex_hint or detect_exchange(code) or "tse"
+    info = _twse_mis_info(code, ex)
+    if info:
+        z = info.get("z")
+        last = _f(z) if z and z != "-" else None
+        return {
+            "symbol": info.get("c"), "name": info.get("n"),
+            "last": last, "open": _f(info.get("o")), "high": _f(info.get("h")), "low": _f(info.get("l")),
+            "bid": info.get("b"), "ask": info.get("a"),
+            "volume": _f(info.get("v") or info.get("tv")),
+            "time": info.get("t"), "upper": _f(info.get("u")), "lower": _f(info.get("w")),
+            "provider": "TWSE-MIS", "ex": ex,
+        }
+    # fallback: yfinance
+    sym = yf_symbol(code, ex)
+    t = yf.Ticker(sym)
+    last = None; open_=high=low=vol=None
+    try:
+        fi = t.fast_info
+        last = float(fi.get("last_price")) if fi.get("last_price") is not None else None
+        open_ = fi.get("open"); high = fi.get("day_high"); low = fi.get("day_low"); vol = fi.get("last_volume")
+    except Exception:
+        hist = t.history(period="1d", interval="1m")
+        if not hist.empty:
+            last = float(hist["Close"].iloc[-1])
+    return {
+        "symbol": code, "name": None, "last": last, "open": open_, "high": high, "low": low,
+        "bid": None, "ask": None, "volume": vol, "time": datetime.now(TZ).strftime("%H:%M:%S"),
+        "upper": None, "lower": None, "provider": "yfinance", "ex": ex,
+    }
+
+# ---- 事件流產生 ----
 def _pct(a, b):
     return None if (a is None or b in (None, 0)) else (a / b - 1.0)
 
 def compute_intraday_events(df: pd.DataFrame, threshold: float, max_events: int = 120):
-    """
-    由分鐘線產生事件：
-    - 相對「上一個事件價」變動達門檻 → 記一則
-    - 創當日新高/新低 → 記一則
-    - 收盤 → 補一則
-    """
     events = []
     if df.empty:
         return events, None
-
-    # 開盤價：優先用 Open，沒有就用 Close
     open_px = float(df.iloc[0]["Open"] if pd.notna(df.iloc[0]["Open"]) else df.iloc[0]["Close"])
     last_event_px = open_px
     day_high = open_px
     day_low = open_px
-
     for _, row in df.iterrows():
-        ts = row["time"]
-        px = float(row["Close"])
-
+        ts = row["time"]; px = float(row["Close"])
         trig_new_high = px > day_high
-        trig_new_low = px < day_low
+        trig_new_low  = px < day_low
         dp = _pct(px, last_event_px)
         trig_thresh = (dp is not None and abs(dp) >= threshold)
-
         reason = []
-        if trig_new_high:
-            day_high = px
-            reason.append("newHigh")
-        if trig_new_low:
-            day_low = px
-            reason.append("newLow")
-        if trig_thresh:
-            reason.append("threshold")
-
+        if trig_new_high: day_high = px; reason.append("newHigh")
+        if trig_new_low:  day_low = px;  reason.append("newLow")
+        if trig_thresh:   reason.append("threshold")
         if reason:
             direction = "up" if px >= last_event_px else "down"
             events.append({
-                "time": ts.strftime("%H:%M"),
-                "price": round(px, 2),
-                "direction": direction,
+                "time": ts.strftime("%H:%M"), "price": round(px, 2), "direction": direction,
                 "chg_from_open_pct": None if open_px in (None, 0) else round((px / open_px - 1) * 100, 2),
                 "chg_from_prev_event_pct": None if last_event_px in (None, 0) else round((px / last_event_px - 1) * 100, 2),
                 "reason": "|".join(reason)
             })
             last_event_px = px
-
         if len(events) >= max_events:
             break
-
-    # 收盤事件（最後一根）
     last_row = df.iloc[-1]
     close_px = float(last_row["Close"])
     events.append({
         "time": last_row["time"].strftime("%H:%M"),
         "price": round(close_px, 2),
-        "direction": "close",
+        "direction": "latest",  # 先標 latest，之後依是否收盤再改
         "chg_from_open_pct": round((close_px / open_px - 1) * 100, 2) if open_px else None,
         "chg_from_prev_event_pct": round((close_px / last_event_px - 1) * 100, 2) if last_event_px else None,
-        "reason": "close"
+        "reason": "latest"
     })
-
     meta = {
         "open": round(open_px, 2),
         "high": round(max(day_high, open_px), 2),
-        "low": round(min(day_low, open_px), 2),
+        "low":  round(min(day_low, open_px), 2),
         "close": round(close_px, 2),
         "bars": int(len(df)),
     }
     return events, meta
 
-@app.get("/api/intraday_events/<code>")
+# ---- 路由 ----
+@rt_bp.get("/api/quote/<code>")
+@login_required
+def api_quote(code):
+    ex = request.args.get("ex")
+    try:
+        q = get_quote(code, ex)
+        return jsonify(success=True, **q)
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 502
+
+@rt_bp.get("/stream/quote/<code>")
+@login_required
+def stream_quote(code):
+    ex = request.args.get("ex")
+    def gen():
+        while True:
+            try:
+                q = get_quote(code, ex)
+                yield f"data: {json.dumps(q, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error':'stream_failed','detail':str(e)}, ensure_ascii=False)}\n\n"
+            import time as _t; _t.sleep(5)
+    return Response(gen(), mimetype="text/event-stream")
+
+@rt_bp.get("/api/intraday_events/<code>")
 @login_required
 def api_intraday_events(code):
-    """
-    /api/intraday_events/2330?threshold=0.003&max=80
-    threshold：0.003=0.30%（預設）；0.001=0.10%
-    max：伺服器端硬上限，避免回太多
-    """
     try:
-        threshold = float(request.args.get("threshold", "0.003"))
+        threshold = float(request.args.get("threshold", "0.003"))  # 0.30% / 0.10%
         max_events = int(request.args.get("max", "80"))
     except Exception:
         return jsonify(success=False, message="bad params"), 400
-
-    df = yf_intraday_1m_tw(code)
+    ex_hint = request.args.get("ex")
+    df, ex = yf_intraday_1m(code, ex_hint)
     events, meta = compute_intraday_events(df, threshold, max_events=max_events)
-
+    now = datetime.now(TZ)
+    is_closed = (now.hour * 60 + now.minute) >= (13 * 60 + 31)
+    if events:
+        if is_closed:
+            events[-1]["direction"] = "close"
+            events[-1]["reason"] = "close"
+            twse_close = twse_last_price(code, ex_hint=ex)
+            if twse_close is not None and meta:
+                prev_ref = meta["open"] if len(events) == 1 else events[-2]["price"]
+                meta["close"] = round(twse_close, 2)
+                events[-1]["price"] = round(twse_close, 2)
+                try:
+                    events[-1]["chg_from_open_pct"] = round((twse_close / meta["open"] - 1) * 100, 2)
+                except Exception: pass
+                try:
+                    events[-1]["chg_from_prev_event_pct"] = round((twse_close / prev_ref - 1) * 100, 2)
+                except Exception: pass
+        else:
+            events[-1]["direction"] = "latest"
+            events[-1]["reason"] = "latest"
     return jsonify(success=True, symbol=code, threshold=threshold, max_events=max_events,
-                   meta=meta, events=events)
+                   ex=ex, meta=meta, events=events)
 
-
+@rt_bp.get("/api/intraday_timeline/<code>")
+@login_required
+def api_intraday_timeline(code):
+    """
+    固定步長（step 分）概覽：09:00、09:30、10:00 ... 到目前（盤後到 13:30）
+    step ∈ {30,15,10,5,1}
+    """
+    try:
+        step = int(request.args.get("step", "30"))
+        assert step in (30, 15, 10, 5, 1)
+    except Exception:
+        return jsonify(success=False, message="bad step"), 400
+    ex_hint = request.args.get("ex")
+    df, ex = yf_intraday_1m(code, ex_hint=ex_hint)
+    if df.empty:
+        return jsonify(success=False, message="no data"), 200
+    open_px = float(df.iloc[0]["Open"] if pd.notna(df.iloc[0]["Open"]) else df.iloc[0]["Close"])
+    day = df.iloc[0]["time"].date()
+    t_start = datetime.combine(day, dtime(9, 0), tzinfo=TZ)
+    t_end   = datetime.combine(day, dtime(13, 30), tzinfo=TZ)
+    now = datetime.now(TZ)
+    limit = min(now, t_end)
+    marks = []
+    ts = t_start; idx = 0; n = len(df)
+    while ts <= limit and idx < n:
+        while idx + 1 < n and df.iloc[idx + 1]["time"] <= ts:
+            idx += 1
+        row = df.iloc[idx]
+        px = float(row["Close"])
+        marks.append({
+            "time": ts.strftime("%H:%M"),
+            "price": round(px, 2),
+            "chg_from_open_pct": round((px / open_px - 1) * 100, 2) if open_px else None
+        })
+        ts += timedelta(minutes=step)
+    is_closed = (now.hour * 60 + now.minute) >= (13 * 60 + 31)
+    if is_closed:
+        last = twse_last_price(code, ex_hint=ex)
+        if last is not None and marks:
+            marks[-1]["price"] = round(last, 2)
+            marks[-1]["chg_from_open_pct"] = round((last / open_px - 1) * 100, 2) if open_px else None
+    meta = {"open": round(open_px, 2), "count": len(marks), "step": step, "ex": ex}
+    return jsonify(success=True, symbol=code, meta=meta, marks=marks)
+# === Realtime (inline) END ===
 
 
 if __name__ == "__main__":
