@@ -1,6 +1,5 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import requests
-from datetime import datetime
 import yfinance as yf
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user, UserMixin
@@ -16,7 +15,7 @@ from collections import defaultdict, deque
 from openai import OpenAI 
 from FinMind.data import DataLoader
 from flask import Response, stream_with_context
-from datetime import datetime, timedelta
+from datetime import datetime, time as dtime, timedelta
 import math
 import time
 import html as py_html
@@ -27,6 +26,8 @@ from email.utils import parsedate_to_datetime
 import json
 from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
+from flask import Blueprint, Response
+
 
 # 載入 .env 檔案
 load_dotenv()
