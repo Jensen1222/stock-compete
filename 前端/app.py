@@ -280,6 +280,118 @@ def detect_company_from_context(ctx: str) -> Tuple[Optional[str], Optional[str]]
             ticker = "2330"
 
     return (ticker, company)
+
+def _too_short_text(txt: str) -> bool:
+    """用來判斷抽到的文字是否明顯不足（或只是錯誤訊息）。"""
+    if not txt: return True
+    s = txt.strip()
+    if len(s) < 400:   # 少於 400 字，大多不足以做財報摘要
+        return True
+    # 文字比例過低也視為不足
+    letters = sum(ch.isalpha() or ch.isdigit() for ch in s)
+    return (letters / max(1, len(s))) < 0.2
+
+def _extract_pdf_with_fitz(path: str) -> str:
+    try:
+        import fitz  # PyMuPDF
+    except Exception as e:
+        return f"[PDF解析器未安裝：pymupdf（{e})]"
+    try:
+        doc = fitz.open(path)
+        # 若加密，嘗試空密碼
+        if doc.is_encrypted:
+            try: doc.authenticate("")
+            except Exception: pass
+        texts = []
+        for page in doc:
+            # "text" 模式通常最穩；若遇到特殊字型，可嘗試 "blocks" 或 "rawdict"
+            texts.append(page.get_text("text"))
+        return "\n".join(texts)
+    except Exception as e:
+        return f"[PDF無法解析(fitz)：{e}]"
+
+def _extract_pdf_with_pdfminer(path: str) -> str:
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract
+    except Exception as e:
+        return f"[PDF解析器未安裝：pdfminer.six（{e})]"
+    try:
+        return pdfminer_extract(path) or ""
+    except Exception as e:
+        return f"[PDF無法解析(pdfminer)：{e}]"
+
+def _extract_pdf_with_ocr(path: str) -> str:
+    """需要：pip install pdf2image pytesseract，且系統裝有 tesseract-ocr & poppler。
+       只在 ENABLE_OCR=1 時啟用，避免平時吃資源。"""
+    if os.getenv("ENABLE_OCR", "0") != "1":
+        return ""
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+    except Exception as e:
+        return f"[OCR未就緒：{e}]"
+    try:
+        images = convert_from_path(path, dpi=300)  # 解析度高一些，OCR 辨識較好
+        chunks = []
+        for img in images:
+            # 中英混合（你可改成 'chi_tra+eng' 視你的 tesseract 語料是否已安裝）
+            txt = pytesseract.image_to_string(img, lang="chi_tra+eng")
+            chunks.append(txt)
+        return "\n".join(chunks)
+    except Exception as e:
+        return f"[PDF無法解析(OCR)：{e}]"
+
+def _extract_text(path: str) -> str:
+    ext = _ext(path)
+    try:
+        if ext == "pdf":
+            # 1) 先用 PyMuPDF
+            t = _extract_pdf_with_fitz(path)
+            if _too_short_text(t):
+                # 2) 不足再用 pdfminer
+                t2 = _extract_pdf_with_pdfminer(path)
+                t = t if not _too_short_text(t2) else t2  # 取比較長/有效者
+
+            if _too_short_text(t):
+                # 3) 仍不足就嘗試 OCR（需 ENABLE_OCR=1）
+                t3 = _extract_pdf_with_ocr(path)
+                if not _too_short_text(t3):
+                    t = t3
+
+            # 最終仍不足就把三種方法的錯誤/摘要攤給前端（避免模型看不到任何內容）
+            return t
+
+        elif ext == "docx":
+            try:
+                import docx
+                d = docx.Document(path)
+                return "\n".join(p.text for p in d.paragraphs if p.text.strip())
+            except Exception as e:
+                return f"[DOCX無法解析：{e}]"
+
+        elif ext in {"txt","html","htm"}:
+            return open(path, "r", encoding="utf-8", errors="ignore").read()
+
+        elif ext in {"csv","xlsx","xls"}:
+            try:
+                import pandas as pd
+                if ext == "csv":
+                    df = pd.read_csv(path, encoding="utf-8", engine="python")
+                    return df.to_csv(index=False)
+                else:
+                    xls = pd.ExcelFile(path)
+                    parts = []
+                    for s in xls.sheet_names:
+                        df = xls.parse(s)
+                        parts.append(f"# {s}\n{df.to_csv(index=False)}")
+                    return "\n\n".join(parts)
+            except Exception as e:
+                return f"[表格無法解析：{e}]"
+
+        else:
+            return "[不支援的副檔名]"
+    except Exception as e:
+        return f"[讀取失敗：{e}]"
 # === 檔案分析輔助 END ===========================================
 
 # 初始化登入管理
