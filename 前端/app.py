@@ -13,7 +13,6 @@ import pandas as pd
 from collections import defaultdict, deque
 from openai import OpenAI 
 from FinMind.data import DataLoader
-from flask import Response, stream_with_context
 from datetime import datetime, time as dtime, timedelta
 import math
 import time
@@ -28,7 +27,7 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, Response
 import os, re, tempfile
 from typing import Tuple, Dict, Any, Optional
-
+from flask import request, Response, stream_with_context
 # 載入 .env 檔案
 load_dotenv()
 
@@ -1594,6 +1593,95 @@ def api_intraday_timeline(code):
     }
     return jsonify(success=True, symbol=code, meta=meta, marks=marks)
 
+# === 檔案專用 AI 路由（覆蓋版）=====================================
+
+@app.route("/ask-ai-file", methods=["POST"])
+def ask_ai_file():
+    try:
+        if "file" not in request.files:
+            return Response("❗️請先選擇要分析的檔案", mimetype="text/plain", status=400)
+
+        up = request.files["file"]
+        if not getattr(up, "filename", ""):
+            return Response("❗️檔案名稱無效", mimetype="text/plain", status=400)
+
+        # 用你已存在的輔助函式與白名單
+        if _ext(up.filename) not in ALLOWED_FILE_EXTS:
+            return Response("❗️不支援的副檔名（允許：pdf/docx/txt/csv/xlsx/xls/html/htm）",
+                            mimetype="text/plain", status=400)
+
+        # 解析檔案 → 文字、單位、KPI
+        path, orig_name   = _save_to_tmp(up)
+        text              = _extract_text(path)
+        unit_label, mult  = _detect_unit(text)
+        kpis              = _parse_kpis(text, mult)
+
+        # 嘗試從原文辨識公司/代號（不查外部資料）
+        ticker, company = detect_company_from_context(text)
+
+        # 組合提示詞：在你既有的 _build_file_prompt 前面加上公司/代號資訊
+        context = _build_file_prompt(orig_name, unit_label, kpis, text)
+        header  = []
+        if company: header.append(f"【公司】{company}")
+        if ticker:  header.append(f"【推測代號】{ticker}")
+        head_txt = ("\n".join(header) + "\n") if header else ""
+
+        instruction = """
+請依上述資料，完成「專用檔案分析」報告（限定 400–600 字，條列式）：
+1) 重點摘要（3–5 點，務必引用文件中的實際數字）
+2) 財務趨勢（YoY/ QoQ 可判斷處請明確指出，無法判斷就說明資料不足）
+3) 重要比率與風險（至少 2 點風險）
+4) 投資觀點與關鍵觀察（聚焦事實，避免臆測）
+限制：僅根據提供的文字與KPI作答；金額以「元」、比率以「%」呈現。
+""".strip()
+
+        system_role = "你是一位嚴謹的財報分析師；不得捏造不存在的數據或段落。"
+        prompt = f"{head_txt}{context}\n\n{instruction}"
+
+        def gen():
+            yield "📄 檔案AI分析（專用）\n\n"
+            try:
+                # 穩健初始化 OpenAI client
+                try:
+                    from openai import OpenAI
+                    client = OpenAI()
+                except Exception:
+                    import openai
+                    client = openai.OpenAI()
+
+                stream = client.chat.completions.create(
+                    model=os.getenv("AI_FILE_ONLY_MODEL", "gpt-4o-mini"),
+                    messages=[
+                        {"role": "system", "content": system_role},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    temperature=0.2,
+                    stream=True
+                )
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+            except Exception as e:
+                # 失敗時把抽取到的 KPI 回傳，方便你檢查
+                yield f"\n❌ 生成摘要失敗：{e}\n\n"
+                yield "—— 抽取結果（備查）——\n"
+                yield f"單位：{unit_label}\n"
+                for k, v in kpis.items():
+                    if v is None: continue
+                    if isinstance(v, (int, float)):
+                        if "(%)" in k:    yield f"- {k}: {v:.2f}%\n"
+                        elif "EPS" in k:  yield f"- {k}: {v:.2f}\n"
+                        else:             yield f"- {k}: {round(v):,}\n"
+                    else:
+                        yield f"- {k}: {v}\n"
+
+        return Response(stream_with_context(gen()), mimetype="text/plain")
+
+    except Exception as e:
+        app.logger.exception("ask-ai-file failed")
+        return Response(f"❌ 伺服器內部錯誤：{e}", mimetype="text/plain", status=500)
+# ================================================================
 
 
 if __name__ == "__main__":

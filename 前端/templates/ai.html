@@ -143,7 +143,7 @@
       <button class="buy-btn" onclick="askAI('future')">未來展望</button>
       <button class="buy-btn" onclick="askAI('analysis')">具體分析</button>
       <!-- 🔽 新增：檔案專用 -->
-      <button class="buy-btn" id="fileOnlyBtn" onclick="askAIFileOnly()">分析檔案（專用）</button>
+      <button class="buy-btn" id="fileOnlyBtn" onclick="askAIFileOnly()">分析檔案</button>
       <a href="{{ url_for('index') }}" class="btn">返回首頁</a>
     </div>
 
@@ -226,7 +226,7 @@
     const texts = buttons.map(b => b.innerHTML);
 
     if (!fileEl || !fileEl.files || fileEl.files.length === 0) {
-      answerDiv.innerHTML = "⚠️ 請先選擇要分析的檔案";
+      answerDiv.innerHTML = " 請先選擇要分析的檔案";
       return;
     }
 

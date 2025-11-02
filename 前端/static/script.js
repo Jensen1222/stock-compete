@@ -950,3 +950,67 @@ async function sendQuestion(){
     _renderAI("❌ 發生錯誤：" + (e?.message || String(e)));
   }
 }
+
+// 輔助：把文字渲染到頁面（相容你現有的 renderAiAnswer/answer/aiAnswer）
+function _renderAI(text){
+  if (typeof renderAiAnswer === "function") {
+    try { renderAiAnswer(text); return; } catch(e){}
+  }
+  const el = document.getElementById("aiAnswer") || document.getElementById("answer");
+  if (el) el.innerText = text;
+}
+
+// 取代原本的 sendQuestion
+async function sendQuestion(){
+  const q      = document.getElementById("aiQuestion")?.value?.trim() || "";
+  const fileEl = document.getElementById("aiFile");
+  const type   = document.getElementById("aiMode")?.value || "analysis";
+  const hasFile = !!(fileEl && fileEl.files && fileEl.files.length > 0);
+
+  const target = document.getElementById("aiAnswer") || document.getElementById("answer");
+  if (target) target.innerHTML = "<div class='loader'></div> ⏳ 產生中…";
+
+  const url = hasFile ? "/ask-ai-file" : "/ask-ai";
+  let options;
+  if (hasFile) {
+    const fd = new FormData();
+    fd.append("file", fileEl.files[0]);
+    if (q) fd.append("note", q); // 補充說明（後端不會拿去改數據）
+    options = { method: "POST", body: fd, credentials: "same-origin" };
+  } else {
+    options = {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify({ question: q, type }),
+      credentials: "same-origin"
+    };
+  }
+
+  try{
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const errText = await res.text().catch(()=> "");
+      console.error("HTTP Error", res.status, errText);
+      _renderAI(`❌ 伺服器錯誤：HTTP ${res.status}\n${errText || "(無詳述)"}`);
+      return;
+    }
+
+    // 串流顯示
+    if (res.body && res.body.getReader) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let acc = "";
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, {stream:true});
+        acc += chunk;
+        _renderAI(acc);
+      }
+    } else {
+      _renderAI(await res.text());
+    }
+  } catch (e) {
+    _renderAI("❌ 發生錯誤：" + (e?.message || String(e)));
+  }
+}
