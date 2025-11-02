@@ -8,7 +8,6 @@ from models import db, User, Trade, Result
 from flask_cors import CORS
 import openai
 from dotenv import load_dotenv
-import os
 from decimal import Decimal, ROUND_HALF_UP
 import pandas as pd
 from collections import defaultdict, deque
@@ -27,7 +26,8 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
 from flask import Blueprint, Response
-
+import os, re, tempfile
+from typing import Tuple, Dict, Any, Optional
 
 # 載入 .env 檔案
 load_dotenv()
@@ -70,8 +70,6 @@ db.init_app(app)
 
 
 # === 檔案分析輔助（不動其他邏輯）BEGIN ==========================
-import os, re, tempfile
-from typing import Tuple, Dict, Any, Optional
 
 ALLOWED_FILE_EXTS = {"pdf","docx","txt","csv","xlsx","xls","html","htm"}
 
@@ -224,6 +222,39 @@ def prepare_file_context_from_request(req) -> Optional[str]:
     unit_label, mult = _detect_unit(text)
     kpis = _parse_kpis(text, mult)
     return _build_file_prompt(orig_name, unit_label, kpis, text)
+
+# 由 file_context 嘗試抓公司與代號（最小侵入）
+def detect_company_from_context(ctx: str):
+    """
+    會回傳 (ticker, company_name)，抓不到則回 (None, None)
+    支援關鍵字：證券代號 / 股票代號 / 代號 / Ticker
+    也會嘗試常見公司欄位或別名（例如台積電/TSMC）
+    """
+    if not ctx:
+        return (None, None)
+
+    import re
+    ticker = None
+    company = None
+
+    # 1) 直接找「證券代號/股票代號/代號/Ticker: 2330」
+    m = re.search(r"(?:證券代號|股票代號|代號|Ticker)\s*[:：]?\s*(\d{4})", ctx, flags=re.I)
+    if m:
+        ticker = m.group(1)
+
+    # 2) 嘗試找公司名稱欄位
+    m2 = re.search(r"(?:公司名稱|公司|發行人|Issuer)\s*[:：]?\s*([^\n]{2,40})", ctx)
+    if m2:
+        company = m2.group(1).strip()
+
+    # 3) 常見別名（台積電/TSMC），沒代號時預設 2330
+    if not company and re.search(r"台積電|台灣積體電路|TSMC", ctx, flags=re.I):
+        company = "台積電"
+        if not ticker:
+            ticker = "2330"
+
+    return (ticker, company)
+
 # === 檔案分析輔助 END ===========================================
 
 # === AI 檔案上傳輔助 END =======================================
@@ -778,14 +809,41 @@ def ask_ai():
         return Response("❗️請輸入問題或上傳檔案", mimetype='text/plain')
 
     def generate(user_input, mode, file_context):
+        import re
+
         yield "💬 回答：\n\n"
 
         model = "gpt-4"
         prompt = ""
         system_role = ""
 
-        # 嘗試找公司資訊（保留原邏輯）
+        # 先用原本從「使用者輸入」抓公司/代號
         ticker, company_name = find_ticker_by_company_name(user_input)
+
+        # ✅ 新增：若抓不到且有檔案脈絡，嘗試從檔案內容偵測
+        if not ticker and file_context:
+            # 1) 直接找數字代號
+            m = re.search(r"(?:證券代號|股票代號|代號|Ticker)\s*[:：]?\s*(\d{4})", file_context, flags=re.I)
+            if m:
+                ticker = m.group(1)
+
+            # 2) 嘗試抓公司名稱欄位
+            if not company_name:
+                m2 = re.search(r"(?:公司名稱|公司|發行人|Issuer)\s*[:：]?\s*([^\n]{2,40})", file_context)
+                if m2:
+                    company_name = m2.group(1).strip()
+
+            # 3) 常見別名：台積電/TSMC（可自行擴充）
+            if not company_name and re.search(r"台積電|台灣積體電路|TSMC", file_context, flags=re.I):
+                company_name = "台積電"
+                if not ticker:
+                    ticker = "2330"
+
+            # 4) 若只有公司名沒有代號，走你原本的反查
+            if not ticker and company_name:
+                t3, c3 = find_ticker_by_company_name(company_name)
+                ticker = t3 or ticker
+                company_name = c3 or company_name
 
         if mode == "analysis":
             system_role = "你是一位專業的台股投資分析師，請給出專業且實用的建議。"
@@ -802,9 +860,9 @@ def ask_ai():
                         start_price = df.iloc[-2]["close"]
                         end_price = df.iloc[-1]["close"]
                         pct = ((end_price - start_price) / start_price) * 100
-                        stock_summary = f"資料摘要：{company_name}（{ticker}）近兩個交易日股價從 {start_price:.2f} 元變動至 {end_price:.2f} 元，漲跌幅為 {pct:.2f}%。"
+                        stock_summary = f"資料摘要：{company_name or ''}（{ticker}）近兩個交易日股價從 {start_price:.2f} 元變動至 {end_price:.2f} 元，漲跌幅為 {pct:.2f}%。"
                     else:
-                        stock_summary = f"⚠️ 查無足夠的 {company_name}（{ticker}）股價資料。"
+                        stock_summary = f"⚠️ 查無足夠的 {company_name or ''}（{ticker}）股價資料。"
                 except Exception as e:
                     stock_summary = f"⚠️ 無法取得股價資料：{str(e)}"
             else:
@@ -813,7 +871,7 @@ def ask_ai():
             yield stock_summary + "\n\n"
 
             base_prompt = f"""{stock_summary}
-使用者問題：「{user_input}」
+使用者問題：「{user_input or '（無文字問題，請依上方檔案內容與KPI摘要進行分析）'}」
 請根據上述資料分析該公司近期表現，提供具體投資建議。"""
 
             # 有檔案時，把檔案摘要置於最前面
@@ -823,12 +881,13 @@ def ask_ai():
             system_role = "你是一位專業的台灣股票顧問，擅長分析產業趨勢與企業長期發展潛力，請用長期視角給出建議。"
 
             if ticker:
-                company_intro = f"公司名稱：{company_name}（{ticker}）\n"
-                user_input = f"{company_name}（{ticker}）的未來發展"  # 保留你的原來寫法
+                company_intro = f"公司名稱：{company_name or ''}（{ticker}）\n"
+                user_input_local = f"{company_name or ''}（{ticker}）的未來發展"
             else:
                 company_intro = ""
+                user_input_local = user_input or "請根據上方檔案內容評估該公司的 3～5 年展望"
 
-            base_prompt = f"""{company_intro}使用者問題：「{user_input}」
+            base_prompt = f"""{company_intro}使用者問題：「{user_input_local}」
 請以長期（3～5 年）投資視角，根據該公司所處產業的未來趨勢、全球環境、技術創新與競爭力，提供完整、清晰的展望與策略建議。"""
 
             prompt = f"{file_context}\n\n{base_prompt}" if file_context else base_prompt
@@ -853,6 +912,7 @@ def ask_ai():
             yield f"\n❌ GPT 回覆失敗：{str(e)}"
 
     return Response(stream_with_context(generate(user_input, mode, file_context)), mimetype="text/plain")
+
 
 
 # ===== 風險關鍵詞 =====
