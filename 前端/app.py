@@ -68,6 +68,166 @@ app.config['INITIAL_BALANCE'] = 10000000
 # 初始化資料庫（使用 models.py 的 db 實例）
 db.init_app(app)
 
+
+# === 檔案分析輔助（不動其他邏輯）BEGIN ==========================
+import os, re, tempfile
+from typing import Tuple, Dict, Any, Optional
+
+ALLOWED_FILE_EXTS = {"pdf","docx","txt","csv","xlsx","xls","html","htm"}
+
+_UNIT_MAP = {
+    "仟元": 1_000, "千元": 1_000,
+    "百萬元": 1_000_000, "百萬": 1_000_000,
+    "億元": 100_000_000, "億": 100_000_000,
+    "元": 1,
+}
+_KPI_PATTERNS = {
+    "營業收入": [r"營業收入", r"營收"],
+    "營業毛利": [r"營業毛利", r"毛利"],
+    "營業毛利率(%)": [r"毛利率", r"營業毛利率"],
+    "營業利益": [r"營業利益", r"營業損益"],
+    "稅前淨利": [r"稅前淨利", r"稅前(純|淨)益"],
+    "本期淨利": [r"(本期|本期歸屬母公司)?淨(利|損)"],
+    "每股盈餘(EPS)": [r"每股盈餘", r"\bEPS\b"],
+    "資產總額": [r"資產總額"],
+    "負債總額": [r"負債總額"],
+    "權益總額": [r"(股東)?權益總額", r"權益合計"],
+    "流動比率(%)": [r"流動比率"],
+    "負債比率(%)": [r"負債比率"],
+}
+_NUM_RE = r"([-+]?\(?\d{1,3}(?:,\d{3})*(?:\.\d+)?\)?|[-+]?\d+(?:\.\d+)?)"
+
+def _ext(name: str) -> str:
+    return (name.rsplit(".",1)[-1].lower() if "." in name else "")
+
+def _save_to_tmp(fs) -> Tuple[str, str]:
+    """把檔案先存到暫存，回傳(暫存路徑, 原檔名)"""
+    orig = getattr(fs, "filename", "") or "upload.bin"
+    fd, path = tempfile.mkstemp(prefix="ai_file_", suffix=("." + _ext(orig)) if _ext(orig) else "")
+    with os.fdopen(fd, "wb") as tmp:
+        tmp.write(fs.read())
+    return path, orig
+
+def _extract_text(path: str) -> str:
+    ext = _ext(path)
+    try:
+        if ext == "pdf":
+            try:
+                import fitz  # PyMuPDF
+                doc = fitz.open(path)
+                return "\n".join(page.get_text("text") for page in doc)
+            except Exception as e:
+                return f"[PDF無法解析：{e}]"
+        elif ext == "docx":
+            try:
+                import docx
+                d = docx.Document(path)
+                return "\n".join(p.text for p in d.paragraphs if p.text.strip())
+            except Exception as e:
+                return f"[DOCX無法解析：{e}]"
+        elif ext in {"txt","html","htm"}:
+            return open(path, "r", encoding="utf-8", errors="ignore").read()
+        elif ext in {"csv","xlsx","xls"}:
+            try:
+                import pandas as pd
+                if ext == "csv":
+                    df = pd.read_csv(path, encoding="utf-8", engine="python")
+                    return df.to_csv(index=False)
+                else:
+                    xls = pd.ExcelFile(path)
+                    parts = []
+                    for s in xls.sheet_names:
+                        df = xls.parse(s)
+                        parts.append(f"# {s}\n{df.to_csv(index=False)}")
+                    return "\n\n".join(parts)
+            except Exception as e:
+                return f"[表格無法解析：{e}]"
+        else:
+            return "[不支援的副檔名]"
+    except Exception as e:
+        return f"[讀取失敗：{e}]"
+
+def _detect_unit(text: str) -> Tuple[str,int]:
+    if not text: return ("元", 1)
+    head = "\n".join(text.splitlines()[:200])
+    m = re.search(r"單位[:：]?\s*([^\s，,。；;]+)", head)
+    if m:
+        label = m.group(1)
+        for k,v in _UNIT_MAP.items():
+            if k in label: return (k,v)
+    for k,v in _UNIT_MAP.items():
+        if k in head: return (k,v)
+    return ("元", 1)
+
+def _to_number(s: str) -> Optional[float]:
+    if not s: return None
+    t = s.strip()
+    neg = t.startswith("(") and t.endswith(")")
+    if neg: t = t[1:-1]
+    t = t.replace(",", "")
+    try:
+        v = float(t)
+        return -v if neg else v
+    except: 
+        return None
+
+def _parse_kpis(text: str, mult: int) -> Dict[str, Any]:
+    res = {k: None for k in _KPI_PATTERNS}
+    if not text: return res
+    for k, kws in _KPI_PATTERNS.items():
+        pat = re.compile(r"(?:%s)[^\n\r]*?%s" % ("|".join(kws), _NUM_RE), re.IGNORECASE)
+        m = pat.search(text)
+        if not m: continue
+        val = _to_number(m.group(2))
+        if val is None: continue
+        if k.endswith("(%)") or "EPS" in k:
+            res[k] = val
+        else:
+            res[k] = val * mult
+    if res.get("負債總額") and res.get("資產總額") and res.get("負債比率(%)") is None:
+        try: res["負債比率(%)"] = res["負債總額"]/res["資產總額"]*100.0
+        except: pass
+    if res.get("本期淨利") and res.get("權益總額"):
+        try: res["推估ROE(%)"] = res["本期淨利"]/res["權益總額"]*100.0
+        except: pass
+    return res
+
+def _build_file_prompt(filename: str, unit_label: str, kpis: Dict[str,Any], raw_text: str) -> str:
+    excerpt = raw_text[:2800] if raw_text else ""
+    lines = [f"【上傳檔案】{filename}（偵測單位：{unit_label}）",
+             "【擷取KPI】（金額已換算為元，% 為百分比）"]
+    for k,v in kpis.items():
+        if v is None: continue
+        if isinstance(v,(int,float)):
+            if "(%)" in k: lines.append(f"- {k}: {v:.2f}%")
+            elif "EPS" in k: lines.append(f"- {k}: {v:.2f}")
+            else: lines.append(f"- {k}: {round(v):,}")
+        else:
+            lines.append(f"- {k}: {v}")
+    lines += ["【原文摘錄（節錄）】", excerpt]
+    return "\n".join(lines)
+
+def prepare_file_context_from_request(req) -> Optional[str]:
+    """
+    若本次請求有夾帶檔案，就回傳整理好的文字脈絡（可插入到原本 prompt）。
+    沒有檔案則回傳 None。
+    """
+    if "file" not in req.files: 
+        return None
+    up = req.files["file"]
+    if not getattr(up, "filename", ""):
+        return None
+    if _ext(up.filename) not in ALLOWED_FILE_EXTS:
+        return f"【提醒】檔案格式不支援：{up.filename}"
+    path, orig_name = _save_to_tmp(up)
+    text = _extract_text(path)
+    unit_label, mult = _detect_unit(text)
+    kpis = _parse_kpis(text, mult)
+    return _build_file_prompt(orig_name, unit_label, kpis, text)
+# === 檔案分析輔助 END ===========================================
+
+# === AI 檔案上傳輔助 END =======================================
+
 # 初始化登入管理
 login_manager = LoginManager()
 login_manager.login_view = 'login'
@@ -600,21 +760,31 @@ def find_ticker_by_company_name(user_input: str):
 
 @app.route("/ask-ai", methods=["POST"])
 def ask_ai():
-    data = request.json
-    user_input = data.get("question", "").strip()
+    # 允許 JSON 與 multipart/form-data（有檔案時）
+    content_type = (request.content_type or "").lower()
+    if "multipart/form-data" in content_type:
+        data = request.form
+    else:
+        data = request.get_json(silent=True) or {}
+
+    user_input = (data.get("question") or "").strip()
     mode = data.get("type", "analysis")
 
-    if not user_input:
-        return Response("❗️請輸入問題", mimetype='text/plain')
+    # 若有檔案，整理成可讀脈絡，稍後會接到 prompt 前面
+    file_context = prepare_file_context_from_request(request)
 
-    def generate(user_input, mode):
+    # 沒有問題也沒有檔案就提示
+    if not user_input and not file_context:
+        return Response("❗️請輸入問題或上傳檔案", mimetype='text/plain')
+
+    def generate(user_input, mode, file_context):
         yield "💬 回答：\n\n"
 
         model = "gpt-4"
         prompt = ""
         system_role = ""
 
-        # 嘗試找公司資訊
+        # 嘗試找公司資訊（保留原邏輯）
         ticker, company_name = find_ticker_by_company_name(user_input)
 
         if mode == "analysis":
@@ -642,21 +812,26 @@ def ask_ai():
 
             yield stock_summary + "\n\n"
 
-            prompt = f"""{stock_summary}
+            base_prompt = f"""{stock_summary}
 使用者問題：「{user_input}」
 請根據上述資料分析該公司近期表現，提供具體投資建議。"""
+
+            # 有檔案時，把檔案摘要置於最前面
+            prompt = f"{file_context}\n\n{base_prompt}" if file_context else base_prompt
 
         else:  # mode == future
             system_role = "你是一位專業的台灣股票顧問，擅長分析產業趨勢與企業長期發展潛力，請用長期視角給出建議。"
 
             if ticker:
                 company_intro = f"公司名稱：{company_name}（{ticker}）\n"
-                user_input = f"{company_name}（{ticker}）的未來發展"
+                user_input = f"{company_name}（{ticker}）的未來發展"  # 保留你的原來寫法
             else:
                 company_intro = ""
 
-            prompt = f"""{company_intro}使用者問題：「{user_input}」
+            base_prompt = f"""{company_intro}使用者問題：「{user_input}」
 請以長期（3～5 年）投資視角，根據該公司所處產業的未來趨勢、全球環境、技術創新與競爭力，提供完整、清晰的展望與策略建議。"""
+
+            prompt = f"{file_context}\n\n{base_prompt}" if file_context else base_prompt
 
         try:
             client = openai.OpenAI()
@@ -677,7 +852,7 @@ def ask_ai():
         except Exception as e:
             yield f"\n❌ GPT 回覆失敗：{str(e)}"
 
-    return Response(stream_with_context(generate(user_input, mode)), mimetype="text/plain")
+    return Response(stream_with_context(generate(user_input, mode, file_context)), mimetype="text/plain")
 
 
 # ===== 風險關鍵詞 =====

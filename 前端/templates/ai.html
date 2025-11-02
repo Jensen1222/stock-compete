@@ -35,17 +35,31 @@
       background-color: #f1f5f9;
       color: #111;
       margin-top: 10px;
-      margin-bottom: 20px;
+      margin-bottom: 12px; /* 與檔案區塊距離 */
     }
 
-    .button-row {
-     display: flex;
-     justify-content: center;
-     gap: 20px;
-     margin-top: 20px;
-     flex-wrap: wrap;
-   }
+    .file-row {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .file-row input[type="file"] {
+      width: 100%;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #333;
+      background: #111;
+      color: #ddd;
+    }
+    .file-row small { opacity: 0.75; }
 
+    .button-row {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
 
     #answer {
       margin-top: 25px;
@@ -90,20 +104,14 @@
       z-index: 999;
     }
 
-    .account-info strong {
-      color: #222222;
-    }
-
+    .account-info strong { color: #222222; }
     .account-info a {
       color: #5c27fe;
       text-decoration: none;
       margin-left: 12px;
       font-weight: bold;
     }
-
-    .account-info a:hover {
-      text-decoration: underline;
-    }
+    .account-info a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -120,6 +128,17 @@
 
     <textarea id="question" placeholder="請輸入問題..."></textarea>
 
+    <!-- ✅ 新增：附加檔案（可選） -->
+    <div class="file-row">
+      <label for="aiFile" style="font-size:0.95rem; opacity:0.9;">附加檔案（選填）</label>
+      <input
+        id="aiFile"
+        type="file"
+        accept=".pdf,.docx,.txt,.csv,.xlsx,.xls,.html,.htm"
+      />
+      <small>可上傳財報/CSV/XLSX/PDF 等；若選擇檔案，系統會自動把檔案內容加入分析。</small>
+    </div>
+
     <div class="button-row">
       <button class="buy-btn" onclick="askAI('future')">未來展望</button>
       <button class="buy-btn" onclick="askAI('analysis')">具體分析</button>
@@ -132,13 +151,17 @@
   <script>
   function askAI(mode) {
     const q = document.getElementById("question").value.trim();
+    const fileEl = document.getElementById("aiFile"); // ← 新增
     const answerDiv = document.getElementById("answer");
     const futureBtn = document.querySelector("button[onclick*='future']");
     const analysisBtn = document.querySelector("button[onclick*='analysis']");
     const buttons = [futureBtn, analysisBtn];
 
-    if (!q) {
-      answerDiv.innerHTML = "⚠️ 請輸入問題";
+    const hasFile = fileEl && fileEl.files && fileEl.files.length > 0;
+
+    // 沒有問題且沒有檔案 → 提示
+    if (!q && !hasFile) {
+      answerDiv.innerHTML = "⚠️ 請輸入問題或選擇檔案";
       return;
     }
 
@@ -153,48 +176,62 @@
     });
     answerDiv.innerHTML = "<div class='loader'></div> ⏳ 分析中...";
 
-    fetch("/ask-ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, type: mode })
-    })
-    .then(res => {
-      if (!res.ok) throw new Error("伺服器錯誤");
+    // 準備 fetch 參數：有檔案用 FormData，否則維持 JSON
+    let fetchOptions;
+    if (hasFile) {
+      const fd = new FormData();
+      fd.append("question", q);
+      fd.append("type", mode);
+      fd.append("file", fileEl.files[0]);
+      fetchOptions = { method: "POST", body: fd, credentials: "same-origin" };
+    } else {
+      fetchOptions = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, type: mode }),
+        credentials: "same-origin"
+      };
+    }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let text = "";
-      answerDiv.innerHTML = ""; // 清除 loading 動畫
+    fetch("/ask-ai", fetchOptions)
+      .then(res => {
+        if (!res.ok) throw new Error("伺服器錯誤");
 
-      function readChunk() {
-        return reader.read().then(({ done, value }) => {
-          if (done) {
-            // 回復按鈕狀態
-            futureBtn.disabled = false;
-            analysisBtn.disabled = false;
-            futureBtn.innerHTML = futureText;
-            analysisBtn.innerHTML = analysisText;
-            return;
-          }
-          const chunk = decoder.decode(value, { stream: true });
-          text += chunk;
-          answerDiv.innerText = text;
-          return readChunk();
-        });
-      }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let text = "";
+        answerDiv.innerHTML = ""; // 清除 loading 動畫
 
-      return readChunk();
-    })
-    .catch(err => {
-      answerDiv.innerText = "❌ 發生錯誤：" + err;
-      // 回復按鈕狀態（即使失敗）
-      futureBtn.disabled = false;
-      analysisBtn.disabled = false;
-      futureBtn.innerHTML = futureText;
-      analysisBtn.innerHTML = analysisText;
-    });
+        function readChunk() {
+          return reader.read().then(({ done, value }) => {
+            if (done) {
+              // 回復按鈕狀態
+              futureBtn.disabled = false;
+              analysisBtn.disabled = false;
+              futureBtn.innerHTML = futureText;
+              analysisBtn.innerHTML = analysisText;
+              return;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            text += chunk;
+            answerDiv.innerText = text;
+            return readChunk();
+          });
+        }
+
+        return readChunk();
+      })
+      .catch(err => {
+        answerDiv.innerText = "❌ 發生錯誤：" + err;
+        // 回復按鈕狀態（即使失敗）
+        futureBtn.disabled = false;
+        analysisBtn.disabled = false;
+        futureBtn.innerHTML = futureText;
+        analysisBtn.innerHTML = analysisText;
+      });
   }
-</script>
+  </script>
 
 </body>
 </html>
+

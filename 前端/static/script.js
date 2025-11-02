@@ -881,3 +881,27 @@ function itdLess(){
   ITD_STEP = 30;
   loadTimeline();
 }
+
+async function sendQuestion(){
+  const q = document.getElementById("aiQuestion").value.trim();
+  const fileEl = document.getElementById("aiFile"); // 新增一個 <input type="file" id="aiFile">
+  const type = document.getElementById("aiMode")?.value || "analysis";
+
+  if(fileEl?.files?.length){
+    const fd = new FormData();
+    fd.append("question", q);
+    fd.append("type", type);
+    fd.append("file", fileEl.files[0]);
+    const res = await fetch("/ask-ai", { method:"POST", body: fd });
+    const text = await res.text();
+    renderAiAnswer(text);
+  }else{
+    const res = await fetch("/ask-ai", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ question: q, type })
+    });
+    const text = await res.text();
+    renderAiAnswer(text);
+  }
+}
