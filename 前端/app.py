@@ -71,15 +71,19 @@ db.init_app(app)
 
 # === 檔案分析輔助（不動其他邏輯）BEGIN ==========================
 
+# 支援的副檔名
 ALLOWED_FILE_EXTS = {"pdf","docx","txt","csv","xlsx","xls","html","htm"}
 
-_UNIT_MAP = {
+# 常見中文財報單位 -> 轉換為「元」的倍率
+_UNIT_MAP: Dict[str, int] = {
     "仟元": 1_000, "千元": 1_000,
     "百萬元": 1_000_000, "百萬": 1_000_000,
     "億元": 100_000_000, "億": 100_000_000,
     "元": 1,
 }
-_KPI_PATTERNS = {
+
+# KPI 關鍵詞
+_KPI_PATTERNS: Dict[str, list[str]] = {
     "營業收入": [r"營業收入", r"營收"],
     "營業毛利": [r"營業毛利", r"毛利"],
     "營業毛利率(%)": [r"毛利率", r"營業毛利率"],
@@ -93,20 +97,24 @@ _KPI_PATTERNS = {
     "流動比率(%)": [r"流動比率"],
     "負債比率(%)": [r"負債比率"],
 }
+
+# 抓數字（含千分位、小數、括號負數）
 _NUM_RE = r"([-+]?\(?\d{1,3}(?:,\d{3})*(?:\.\d+)?\)?|[-+]?\d+(?:\.\d+)?)"
 
 def _ext(name: str) -> str:
     return (name.rsplit(".",1)[-1].lower() if "." in name else "")
 
 def _save_to_tmp(fs) -> Tuple[str, str]:
-    """把檔案先存到暫存，回傳(暫存路徑, 原檔名)"""
+    """把檔案先存到暫存，回傳 (暫存路徑, 原檔名)"""
     orig = getattr(fs, "filename", "") or "upload.bin"
-    fd, path = tempfile.mkstemp(prefix="ai_file_", suffix=("." + _ext(orig)) if _ext(orig) else "")
+    suffix = ("." + _ext(orig)) if _ext(orig) else ""
+    fd, path = tempfile.mkstemp(prefix="ai_file_", suffix=suffix)
     with os.fdopen(fd, "wb") as tmp:
         tmp.write(fs.read())
     return path, orig
 
 def _extract_text(path: str) -> str:
+    """依副檔名抽文字；失敗時回傳可讀錯誤描述（不中斷流程）"""
     ext = _ext(path)
     try:
         if ext == "pdf":
@@ -146,60 +154,81 @@ def _extract_text(path: str) -> str:
         return f"[讀取失敗：{e}]"
 
 def _detect_unit(text: str) -> Tuple[str,int]:
-    if not text: return ("元", 1)
+    """從檔案前段尋找『單位：…』或常見單位詞彙"""
+    if not text:
+        return ("元", 1)
     head = "\n".join(text.splitlines()[:200])
     m = re.search(r"單位[:：]?\s*([^\s，,。；;]+)", head)
     if m:
         label = m.group(1)
         for k,v in _UNIT_MAP.items():
-            if k in label: return (k,v)
+            if k in label:
+                return (k,v)
     for k,v in _UNIT_MAP.items():
-        if k in head: return (k,v)
+        if k in head:
+            return (k,v)
     return ("元", 1)
 
 def _to_number(s: str) -> Optional[float]:
-    if not s: return None
+    """字串轉數字；支援 (123) 負數、千分位、小數"""
+    if not s:
+        return None
     t = s.strip()
     neg = t.startswith("(") and t.endswith(")")
-    if neg: t = t[1:-1]
+    if neg:
+        t = t[1:-1]
     t = t.replace(",", "")
     try:
         v = float(t)
         return -v if neg else v
-    except: 
+    except Exception:
         return None
 
 def _parse_kpis(text: str, mult: int) -> Dict[str, Any]:
-    res = {k: None for k in _KPI_PATTERNS}
-    if not text: return res
+    """以關鍵字+就近數字擷取 KPI；金額類自動乘以單位倍率"""
+    res: Dict[str, Any] = {k: None for k in _KPI_PATTERNS}
+    if not text:
+        return res
     for k, kws in _KPI_PATTERNS.items():
         pat = re.compile(r"(?:%s)[^\n\r]*?%s" % ("|".join(kws), _NUM_RE), re.IGNORECASE)
         m = pat.search(text)
-        if not m: continue
-        val = _to_number(m.group(2))
-        if val is None: continue
+        if not m:
+            continue
+        val = _to_number(m.group(1))  # << 修正：數字就是第 1 組
+        if val is None:
+            continue
         if k.endswith("(%)") or "EPS" in k:
             res[k] = val
         else:
             res[k] = val * mult
+    # 衍生：負債比率、推估ROE
     if res.get("負債總額") and res.get("資產總額") and res.get("負債比率(%)") is None:
-        try: res["負債比率(%)"] = res["負債總額"]/res["資產總額"]*100.0
-        except: pass
+        try:
+            res["負債比率(%)"] = res["負債總額"]/res["資產總額"]*100.0
+        except Exception:
+            pass
     if res.get("本期淨利") and res.get("權益總額"):
-        try: res["推估ROE(%)"] = res["本期淨利"]/res["權益總額"]*100.0
-        except: pass
+        try:
+            res["推估ROE(%)"] = res["本期淨利"]/res["權益總額"]*100.0
+        except Exception:
+            pass
     return res
 
 def _build_file_prompt(filename: str, unit_label: str, kpis: Dict[str,Any], raw_text: str) -> str:
+    """把擷取結果組成可丟進模型的前置脈絡"""
     excerpt = raw_text[:2800] if raw_text else ""
     lines = [f"【上傳檔案】{filename}（偵測單位：{unit_label}）",
              "【擷取KPI】（金額已換算為元，% 為百分比）"]
     for k,v in kpis.items():
-        if v is None: continue
+        if v is None:
+            continue
         if isinstance(v,(int,float)):
-            if "(%)" in k: lines.append(f"- {k}: {v:.2f}%")
-            elif "EPS" in k: lines.append(f"- {k}: {v:.2f}")
-            else: lines.append(f"- {k}: {round(v):,}")
+            if "(%)" in k:
+                lines.append(f"- {k}: {v:.2f}%")
+            elif "EPS" in k:
+                lines.append(f"- {k}: {v:.2f}")
+            else:
+                lines.append(f"- {k}: {round(v):,}")
         else:
             lines.append(f"- {k}: {v}")
     lines += ["【原文摘錄（節錄）】", excerpt]
@@ -210,7 +239,7 @@ def prepare_file_context_from_request(req) -> Optional[str]:
     若本次請求有夾帶檔案，就回傳整理好的文字脈絡（可插入到原本 prompt）。
     沒有檔案則回傳 None。
     """
-    if "file" not in req.files: 
+    if "file" not in req.files:
         return None
     up = req.files["file"]
     if not getattr(up, "filename", ""):
@@ -224,20 +253,18 @@ def prepare_file_context_from_request(req) -> Optional[str]:
     return _build_file_prompt(orig_name, unit_label, kpis, text)
 
 # 由 file_context 嘗試抓公司與代號（最小侵入）
-def detect_company_from_context(ctx: str):
+def detect_company_from_context(ctx: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    會回傳 (ticker, company_name)，抓不到則回 (None, None)
-    支援關鍵字：證券代號 / 股票代號 / 代號 / Ticker
-    也會嘗試常見公司欄位或別名（例如台積電/TSMC）
+    回傳 (ticker, company_name)；抓不到則 (None, None)
+    支援關鍵字：證券代號 / 股票代號 / 代號 / Ticker；也處理台積電/TSMC 別名。
     """
     if not ctx:
         return (None, None)
 
-    import re
-    ticker = None
-    company = None
+    ticker: Optional[str] = None
+    company: Optional[str] = None
 
-    # 1) 直接找「證券代號/股票代號/代號/Ticker: 2330」
+    # 1) 直接找數字代號
     m = re.search(r"(?:證券代號|股票代號|代號|Ticker)\s*[:：]?\s*(\d{4})", ctx, flags=re.I)
     if m:
         ticker = m.group(1)
@@ -254,10 +281,7 @@ def detect_company_from_context(ctx: str):
             ticker = "2330"
 
     return (ticker, company)
-
 # === 檔案分析輔助 END ===========================================
-
-# === AI 檔案上傳輔助 END =======================================
 
 # 初始化登入管理
 login_manager = LoginManager()

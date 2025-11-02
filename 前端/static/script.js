@@ -882,26 +882,71 @@ function itdLess(){
   loadTimeline();
 }
 
-async function sendQuestion(){
-  const q = document.getElementById("aiQuestion").value.trim();
-  const fileEl = document.getElementById("aiFile"); // 新增一個 <input type="file" id="aiFile">
-  const type = document.getElementById("aiMode")?.value || "analysis";
+// AI問答
+// --- 輔助：把文字渲染到頁面（相容你現有的 renderAiAnswer/answer/aiAnswer） ---
+function _renderAI(text){
+  if (typeof renderAiAnswer === "function") {
+    try { renderAiAnswer(text); return; } catch(e){}
+  }
+  const el = document.getElementById("aiAnswer") || document.getElementById("answer");
+  if (el) el.innerText = text;
+}
 
-  if(fileEl?.files?.length){
+// --- 取代原本的 sendQuestion：有檔案→/ask-ai-file；無檔案→/ask-ai（皆用串流顯示） ---
+async function sendQuestion(){
+  const q      = document.getElementById("aiQuestion")?.value?.trim() || "";
+  const fileEl = document.getElementById("aiFile");
+  const type   = document.getElementById("aiMode")?.value || "analysis";
+  const hasFile = !!(fileEl && fileEl.files && fileEl.files.length > 0);
+
+  // 目標區塊顯示 loading
+  const target = document.getElementById("aiAnswer") || document.getElementById("answer");
+  if (target) target.innerHTML = "<div class='loader'></div> ⏳ 產生中…";
+
+  // 準備請求
+  const url = hasFile ? "/ask-ai-file" : "/ask-ai";
+  let options;
+  if (hasFile) {
     const fd = new FormData();
-    fd.append("question", q);
-    fd.append("type", type);
     fd.append("file", fileEl.files[0]);
-    const res = await fetch("/ask-ai", { method:"POST", body: fd });
-    const text = await res.text();
-    renderAiAnswer(text);
-  }else{
-    const res = await fetch("/ask-ai", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ question: q, type })
-    });
-    const text = await res.text();
-    renderAiAnswer(text);
+    // 可加註解用（檔案專用路由會當作補充說明，不影響分析準則）
+    if (q) fd.append("note", q);
+    options = { method: "POST", body: fd, credentials: "same-origin" };
+  } else {
+    options = {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify({ question: q, type }),
+      credentials: "same-origin"
+    };
+  }
+
+  try{
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const errText = await res.text().catch(()=> "");
+      _renderAI(`❌ 伺服器錯誤：${res.status} ${errText}`);
+      return;
+    }
+
+    // 支援串流（後端 /ask-ai 與 /ask-ai-file 都是串流回傳）
+    if (res.body && res.body.getReader) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let acc = "";
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, {stream:true});
+        acc += chunk;
+        _renderAI(acc);   // 邊收邊畫
+      }
+    } else {
+      // 少數環境不支援串流：退回一次性顯示
+      const text = await res.text();
+      _renderAI(text);
+    }
+  } catch (e) {
+    _renderAI("❌ 發生錯誤：" + (e?.message || String(e)));
   }
 }

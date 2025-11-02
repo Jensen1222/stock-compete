@@ -128,7 +128,7 @@
 
     <textarea id="question" placeholder="請輸入問題..."></textarea>
 
-    <!-- ✅ 新增：附加檔案（可選） -->
+    <!-- ✅ 附加檔案（選填） -->
     <div class="file-row">
       <label for="aiFile" style="font-size:0.95rem; opacity:0.9;">附加檔案（選填）</label>
       <input
@@ -142,6 +142,8 @@
     <div class="button-row">
       <button class="buy-btn" onclick="askAI('future')">未來展望</button>
       <button class="buy-btn" onclick="askAI('analysis')">具體分析</button>
+      <!-- 🔽 新增：檔案專用 -->
+      <button class="buy-btn" id="fileOnlyBtn" onclick="askAIFileOnly()">分析檔案（專用）</button>
       <a href="{{ url_for('index') }}" class="btn">返回首頁</a>
     </div>
 
@@ -149,34 +151,27 @@
   </div>
 
   <script>
+  // 文字/一般模式：沿用 /ask-ai
   function askAI(mode) {
     const q = document.getElementById("question").value.trim();
-    const fileEl = document.getElementById("aiFile"); // ← 新增
+    const fileEl = document.getElementById("aiFile");
     const answerDiv = document.getElementById("answer");
-    const futureBtn = document.querySelector("button[onclick*='future']");
+    const futureBtn   = document.querySelector("button[onclick*='future']");
     const analysisBtn = document.querySelector("button[onclick*='analysis']");
-    const buttons = [futureBtn, analysisBtn];
+    const fileOnlyBtn = document.getElementById("fileOnlyBtn");
+    const buttons = [futureBtn, analysisBtn, fileOnlyBtn].filter(Boolean);
 
     const hasFile = fileEl && fileEl.files && fileEl.files.length > 0;
 
-    // 沒有問題且沒有檔案 → 提示
     if (!q && !hasFile) {
       answerDiv.innerHTML = "⚠️ 請輸入問題或選擇檔案";
       return;
     }
 
-    // 儲存原始按鈕文字
-    const futureText = futureBtn.innerHTML;
-    const analysisText = analysisBtn.innerHTML;
-
-    // 顯示 loading 動畫 + 禁用按鈕
-    buttons.forEach(btn => {
-      btn.disabled = true;
-      btn.innerHTML = "⏳ 載入中...";
-    });
+    const texts = buttons.map(b => b.innerHTML);
+    buttons.forEach(b => { b.disabled = true; b.innerHTML = "⏳ 載入中..."; });
     answerDiv.innerHTML = "<div class='loader'></div> ⏳ 分析中...";
 
-    // 準備 fetch 參數：有檔案用 FormData，否則維持 JSON
     let fetchOptions;
     if (hasFile) {
       const fd = new FormData();
@@ -196,20 +191,14 @@
     fetch("/ask-ai", fetchOptions)
       .then(res => {
         if (!res.ok) throw new Error("伺服器錯誤");
-
         const reader = res.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let text = "";
-        answerDiv.innerHTML = ""; // 清除 loading 動畫
-
+        answerDiv.innerHTML = "";
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
-              // 回復按鈕狀態
-              futureBtn.disabled = false;
-              analysisBtn.disabled = false;
-              futureBtn.innerHTML = futureText;
-              analysisBtn.innerHTML = analysisText;
+              buttons.forEach((b,i)=>{ b.disabled = false; b.innerHTML = texts[i]; });
               return;
             }
             const chunk = decoder.decode(value, { stream: true });
@@ -218,20 +207,57 @@
             return readChunk();
           });
         }
-
         return readChunk();
       })
       .catch(err => {
         answerDiv.innerText = "❌ 發生錯誤：" + err;
-        // 回復按鈕狀態（即使失敗）
-        futureBtn.disabled = false;
-        analysisBtn.disabled = false;
-        futureBtn.innerHTML = futureText;
-        analysisBtn.innerHTML = analysisText;
+        buttons.forEach((b,i)=>{ b.disabled = false; b.innerHTML = texts[i]; });
       });
+  }
+
+  // 🔥 檔案專用：只呼叫 /ask-ai-file（更精準、單一職責）
+  async function askAIFileOnly(){
+    const fileEl = document.getElementById("aiFile");
+    const answerDiv = document.getElementById("answer");
+    const fileOnlyBtn = document.getElementById("fileOnlyBtn");
+    const futureBtn   = document.querySelector("button[onclick*='future']");
+    const analysisBtn = document.querySelector("button[onclick*='analysis']");
+    const buttons = [fileOnlyBtn, futureBtn, analysisBtn].filter(Boolean);
+    const texts = buttons.map(b => b.innerHTML);
+
+    if (!fileEl || !fileEl.files || fileEl.files.length === 0) {
+      answerDiv.innerHTML = "⚠️ 請先選擇要分析的檔案";
+      return;
+    }
+
+    buttons.forEach(b => { b.disabled = true; b.innerHTML = "⏳ 解析中..."; });
+    answerDiv.innerHTML = "<div class='loader'></div> ⏳ 檔案解析與分析中...";
+
+    const fd = new FormData();
+    fd.append("file", fileEl.files[0]);
+    // 可加：fd.append("company", "..."); fd.append("period", "...");
+
+    try{
+      const res = await fetch("/ask-ai-file", { method:"POST", body: fd, credentials:"same-origin" });
+      if(!res.ok) throw new Error("伺服器錯誤");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      answerDiv.innerHTML = "";
+      let text = "";
+      while(true){
+        const {done, value} = await reader.read();
+        if(done) break;
+        const chunk = decoder.decode(value, {stream:true});
+        text += chunk;
+        answerDiv.innerText = text;
+      }
+    }catch(err){
+      answerDiv.innerText = "❌ 發生錯誤：" + err;
+    }finally{
+      buttons.forEach((b,i)=>{ b.disabled = false; b.innerHTML = texts[i]; });
+    }
   }
   </script>
 
 </body>
 </html>
-
